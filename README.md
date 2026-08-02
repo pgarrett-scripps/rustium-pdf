@@ -50,6 +50,7 @@ cargo run --example render -- file.pdf [page] [dpi] [out.png] # rasterise
 | Filters | Flate, LZW, ASCIIHex, ASCII85, RunLength, with PNG/TIFF predictors |
 | Content | Full graphics and text state machine, form XObjects, inline images, Type3 glyph procedures |
 | Fonts | Simple, Type0/CID and Type3; encodings with `/Differences`; `/ToUnicode`; the builtin `/Encoding` of an embedded Type1 program; CID `/W` arrays; built-in metrics for the standard 14 |
+| Mathematics | TeX size variants (`summationdisplay`, `parenleftBig`) and extensible delimiters built from stacked pieces, both resolved to single characters |
 | Outlines | TrueType, OpenType and bare CFF via `ttf-parser` |
 | Rendering | tiny-skia rasteriser honouring content-stream paint order, with region cropping and PNG output |
 

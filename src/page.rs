@@ -91,6 +91,19 @@ impl Glyph {
     pub fn outline_matrix(&self) -> Matrix {
         self.glyph_matrix
     }
+
+    /// The character code this glyph was selected by, as it appeared in the content stream.
+    ///
+    /// Useful when [`Glyph::text`] is empty: the code plus the font is what identifies which
+    /// mapping is missing.
+    pub fn code(&self) -> u32 {
+        self.code.code
+    }
+
+    /// The glyph selector: the code itself for a simple font, the CID for a composite one.
+    pub fn cid(&self) -> u32 {
+        self.code.cid
+    }
 }
 
 /// A filled and/or stroked path.

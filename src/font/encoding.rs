@@ -661,6 +661,88 @@ static AGL: &[(&str, char)] = &[
 ///
 /// Resolution order mirrors the AGL specification: the list itself, `uniXXXX[XXXX...]`,
 /// `uXXXX`–`uXXXXXX`, then a suffix-stripped retry (`one.oldstyle` → `one`).
+
+/// Names used by TeX's mathematics fonts that no standard glyph list carries.
+///
+/// The Adobe list covers text. TeX's `CMSY`, `CMEX` and the AMS fonts name symbols Adobe never
+/// had to, and they name delimiters by construction — a tall bracket is three glyphs, not one.
+#[rustfmt::skip]
+static MATH_NAMES: &[(&str, &str)] = &[
+    ("angbracketleft", "\u{27E8}"), ("angbracketright", "\u{27E9}"),
+    ("arrowhookleft", "\u{21A9}"), ("arrowhookright", "\u{21AA}"),
+    ("arrowlefttophalf", "\u{21BC}"), ("arrowrighttophalf", "\u{21C0}"),
+    ("bardbl", "\u{2016}"), ("braceleft", "{"), ("braceright", "}"),
+    ("ceilingleft", "\u{2308}"), ("ceilingright", "\u{2309}"),
+    ("circlecopyrt", "\u{00A9}"), ("circledivide", "\u{2298}"),
+    ("circledot", "\u{2299}"), ("circleminus", "\u{2296}"),
+    ("contintegral", "\u{222E}"), ("coproduct", "\u{2210}"),
+    ("floorleft", "\u{230A}"), ("floorright", "\u{230B}"),
+    ("intersection", "\u{2229}"), ("logicaland", "\u{2227}"), ("logicalor", "\u{2228}"),
+    ("negationslash", "\u{2044}"), ("owner", "\u{220B}"),
+    ("summation", "\u{2211}"), ("union", "\u{222A}"), ("unionmulti", "\u{228E}"),
+    ("uniondbl", "\u{228C}"), ("vextenddouble", "\u{2016}"), ("vextendsingle", "|"),
+];
+
+/// Size variants TeX appends to a delimiter or operator name. A `\\big(` is a different glyph
+/// from `(` but the same character.
+const MATH_SIZES: [&str; 8] = ["Bigg", "bigg", "Big", "big", "display", "text", "Ex", "ex"];
+
+/// Resolves a TeX mathematics glyph name.
+///
+/// Two conventions have to be undone. Size variants (`summationdisplay`, `parenleftBig`) are the
+/// same character drawn larger, so the suffix is stripped. Extensible delimiters are *built* from
+/// pieces — `parenlefttp`, `parenleftex`, `parenleftbt` stack into one tall bracket — so the top
+/// piece stands for the delimiter and the middle and bottom pieces yield nothing, which is what
+/// makes a three-glyph bracket extract as a single character rather than three.
+fn math_name_to_unicode(name: &str) -> Option<String> {
+    // Piece suffixes first: `parenlefttp` also ends in no size suffix, and stripping in the
+    // other order would turn `bracketrightbt` into `bracketrightb`.
+    for piece in ["tp", "bt", "mid", "ex"] {
+        if let Some(base) = name.strip_suffix(piece) {
+            if base.len() >= 3
+                && (base.starts_with("paren")
+                    || base.starts_with("bracket")
+                    || base.starts_with("brace")
+                    || base.starts_with("angbracket")
+                    || base.starts_with("arrow")
+                    || base.starts_with("radical")
+                    || base.starts_with("vert")
+                    || base.starts_with("bracehtip"))
+            {
+                return match piece {
+                    // Only the top piece carries the character; the rest continue the same one.
+                    "tp" => lookup_math(base).or_else(|| plain_lookup(base)),
+                    _ => Some(String::new()),
+                };
+            }
+        }
+    }
+    for size in MATH_SIZES {
+        if let Some(base) = name.strip_suffix(size) {
+            if base.len() >= 3 {
+                if let Some(found) = lookup_math(base).or_else(|| plain_lookup(base)) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    lookup_math(name)
+}
+
+fn lookup_math(name: &str) -> Option<String> {
+    MATH_NAMES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, v)| (*v).to_string())
+}
+
+/// The Adobe list only, so that the math resolver cannot recurse into itself.
+fn plain_lookup(name: &str) -> Option<String> {
+    AGL.binary_search_by(|(n, _)| n.cmp(&name))
+        .ok()
+        .map(|i| AGL[i].1.to_string())
+}
+
 pub fn glyph_name_to_unicode(name: &str) -> Option<String> {
     if name.is_empty() || name == ".notdef" {
         return None;
@@ -687,6 +769,10 @@ pub fn glyph_name_to_unicode(name: &str) -> Option<String> {
                 return Some(ch.to_string());
             }
         }
+    }
+    // TeX mathematics names: size variants and the pieces of an extensible delimiter.
+    if let Some(found) = math_name_to_unicode(name) {
+        return Some(found);
     }
     // `g.alt`, `a.sc`, `T1`-style subset suffixes.
     if let Some(base) = name
@@ -721,6 +807,82 @@ mod tests {
         assert_eq!(glyph_name_to_unicode("one.oldstyle").as_deref(), Some("1"));
         assert_eq!(glyph_name_to_unicode(".notdef"), None);
         assert_eq!(glyph_name_to_unicode("madeupname"), None);
+    }
+
+    #[test]
+    fn tex_size_variants_resolve_to_one_character() {
+        // `\\big(` through `\\Bigg(` are four glyphs and one character.
+        for n in [
+            "parenleftbig",
+            "parenleftBig",
+            "parenleftbigg",
+            "parenleftBigg",
+        ] {
+            assert_eq!(glyph_name_to_unicode(n).as_deref(), Some("("), "{n}");
+        }
+        assert_eq!(
+            glyph_name_to_unicode("bracketrightBig").as_deref(),
+            Some("]")
+        );
+        assert_eq!(glyph_name_to_unicode("radicalbig").as_deref(), Some("√"));
+    }
+
+    #[test]
+    fn display_and_text_operators_resolve() {
+        assert_eq!(
+            glyph_name_to_unicode("summationdisplay").as_deref(),
+            Some("∑")
+        );
+        assert_eq!(glyph_name_to_unicode("summationtext").as_deref(), Some("∑"));
+        assert_eq!(
+            glyph_name_to_unicode("integraldisplay").as_deref(),
+            Some("∫")
+        );
+        assert_eq!(
+            glyph_name_to_unicode("productdisplay").as_deref(),
+            Some("∏")
+        );
+        assert_eq!(glyph_name_to_unicode("uniondisplay").as_deref(), Some("∪"));
+        assert_eq!(
+            glyph_name_to_unicode("contintegraldisplay").as_deref(),
+            Some("∮")
+        );
+    }
+
+    #[test]
+    fn an_extensible_delimiter_yields_exactly_one_character() {
+        // A tall bracket is stacked from three glyphs. Emitting a character per piece would
+        // triple every delimiter in a displayed matrix.
+        assert_eq!(glyph_name_to_unicode("parenlefttp").as_deref(), Some("("));
+        assert_eq!(glyph_name_to_unicode("parenleftex").as_deref(), Some(""));
+        assert_eq!(glyph_name_to_unicode("parenleftbt").as_deref(), Some(""));
+        assert_eq!(
+            glyph_name_to_unicode("bracketrighttp").as_deref(),
+            Some("]")
+        );
+        assert_eq!(glyph_name_to_unicode("bracketrightex").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn math_names_absent_from_the_adobe_list_resolve() {
+        assert_eq!(
+            glyph_name_to_unicode("angbracketleft").as_deref(),
+            Some("⟨")
+        );
+        assert_eq!(glyph_name_to_unicode("floorleft").as_deref(), Some("⌊"));
+        assert_eq!(glyph_name_to_unicode("ceilingright").as_deref(), Some("⌉"));
+        assert_eq!(glyph_name_to_unicode("bardbl").as_deref(), Some("‖"));
+        assert_eq!(glyph_name_to_unicode("coproduct").as_deref(), Some("∐"));
+    }
+
+    #[test]
+    fn ordinary_names_are_not_mangled_by_the_math_rules() {
+        // `big`, `text` and `ex` are suffixes only in TeX's mathematics fonts; a text glyph
+        // whose name merely ends that way must survive untouched.
+        assert_eq!(glyph_name_to_unicode("a").as_deref(), Some("a"));
+        assert_eq!(glyph_name_to_unicode("six").as_deref(), Some("6"));
+        assert_eq!(glyph_name_to_unicode("bullet").as_deref(), Some("•"));
+        assert_eq!(glyph_name_to_unicode("nosuchglyphbig"), None);
     }
 
     #[test]
