@@ -1,12 +1,15 @@
 # rustium-pdf
 
 Pure-Rust extraction of PDF page primitives — glyphs with geometry, vector paths, images — plus
-page rendering. A thread-safe replacement for the slice of [pdfium](https://pdfium.googlesource.com/pdfium/)
-that [`rustypaper`](https://github.com/pgarrett-scripps/rustypaper) uses, with the
-same observable semantics where downstream code depends on them: generated space glyphs,
-soft-hyphen stripping, and y-down page-space helpers.
+page rendering.
 
 No C library, no FFI, no global state.
+
+This is the default PDF backend of
+[`rustypaper`](https://github.com/pgarrett-scripps/rustypaper), where it took over the slice of
+[pdfium](https://pdfium.googlesource.com/pdfium/) that project used to require; pdfium remains
+there as an opt-in feature. Observable semantics match pdfium's where downstream code depends on
+them: generated space glyphs, soft-hyphen stripping, and y-down page-space helpers.
 
 ## Install
 
@@ -15,7 +18,8 @@ No C library, no FFI, no global state.
 rustium-pdf = "0.1"
 ```
 
-The package is `rustium-pdf`; the crate imports as `rustium_pdf`.
+The package is `rustium-pdf`; the crate imports as `rustium_pdf`. API documentation is at
+[docs.rs/rustium-pdf](https://docs.rs/rustium-pdf).
 
 Minimum supported Rust version is **1.88**, set by the `image` dependency and verified in CI.
 
@@ -34,11 +38,15 @@ for glyph in page.glyphs.iter().filter(|g| g.is_visible()) {
 let png = page.render(&doc, rustium_pdf::RenderOptions::at_dpi(150.0))?.to_png()?;
 ```
 
-Two examples are included:
+`Document::from_bytes` opens a document already in memory instead of a path.
+
+Four examples are included:
 
 ```sh
-cargo run --example dump   -- file.pdf [page]                 # primitives and text
+cargo run --example dump   -- file.pdf [page]                 # primitives with geometry
+cargo run --example text   -- file.pdf [page]                 # text, form feed between pages
 cargo run --example render -- file.pdf [page] [dpi] [out.png] # rasterise
+cargo run --example fonts  -- file.pdf                        # per-font unmapped-glyph rates
 ```
 
 ## What it does
@@ -46,10 +54,10 @@ cargo run --example render -- file.pdf [page] [dpi] [out.png] # rasterise
 | Area | Coverage |
 | --- | --- |
 | File structure | xref tables and streams, hybrid `/XRefStm`, object streams, incremental updates, brute-force recovery for damaged files |
-| Encryption | RC4 and AES, standard security handler |
+| Encryption | RC4 and AES under the standard security handler, revisions 2 through 6 |
 | Filters | Flate, LZW, ASCIIHex, ASCII85, RunLength, with PNG/TIFF predictors |
 | Content | Full graphics and text state machine, form XObjects, inline images, Type3 glyph procedures |
-| Fonts | Simple, Type0/CID and Type3; encodings with `/Differences`; `/ToUnicode`; the builtin `/Encoding` of an embedded Type1 program; CID `/W` arrays; built-in metrics for the standard 14 |
+| Fonts | Simple, Type0/CID and Type3; encodings with `/Differences`; `/ToUnicode`; the builtin `/Encoding` of an embedded Type1 program; CID `/W` arrays; built-in metrics for the standard 14; Microsoft symbol-font `U+F0xx` code points rewritten as the symbols they stand for |
 | Mathematics | TeX size variants (`summationdisplay`, `parenleftBig`) and extensible delimiters built from stacked pieces, both resolved to single characters |
 | Outlines | TrueType, OpenType and bare CFF via `ttf-parser` |
 | Rendering | tiny-skia rasteriser honouring content-stream paint order, with region cropping and PNG output |
@@ -58,7 +66,8 @@ cargo run --example render -- file.pdf [page] [dpi] [out.png] # rasterise
 
 `Document` is `Send + Sync` with no global state, so pages can be extracted and rendered
 concurrently from a single open document — the property pdfium's process-wide, single-threaded
-design cannot offer. A compile-time assertion in `page.rs` keeps it that way.
+design cannot offer. A compile-time assertion in the test build keeps it that way, so a stray
+`Rc` or `Cell` cannot take it away unnoticed.
 
 ## Fonts without embedded programs
 
@@ -83,7 +92,7 @@ lands in exactly the right place carrying no text at all.
 This is built for **academic paper extraction** — preprints and journal PDFs with a real text
 layer. That focus is deliberate, and the following are explicit non-goals:
 
-- **Scanned and image-only pages.** Reading them needs OCR. [`Page::is_likely_scanned`] reports
+- **Scanned and image-only pages.** Reading them needs OCR. `Page::is_likely_scanned` reports
   the case so a caller can say why a document yielded nothing, rather than returning an empty
   page as though it had succeeded. A page carrying an invisible OCR text layer is ordinary text
   and extracts normally.
@@ -92,7 +101,8 @@ layer. That focus is deliberate, and the following are explicit non-goals:
 - **Forms, annotations, tagged-PDF structure and JavaScript.**
 
 Encrypted documents *are* handled — publisher-typeset PDFs are routinely encrypted with an empty
-user password, so refusing them would refuse ordinary papers.
+user password, so refusing them would refuse ordinary papers. `Document::open` tries the empty
+password; `Document::open_with_password` takes one. Certificate-based encryption is refused.
 
 ## Known gaps
 
@@ -113,8 +123,8 @@ user password, so refusing them would refuse ordinary papers.
 95 tests. Verified against real-world documents at 100% glyph-outline resolution and roughly
 17 ms/page rendering at 110 dpi.
 
-Parsing is measured by agreement with poppler over two corpora — ten arXiv papers and eight
-bioRxiv preprints spanning eight distinct producers. Mean word-bigram recall **0.974** and
+Parsing is measured by agreement with poppler over two corpora — ten arXiv papers, all from TeX,
+and eight bioRxiv preprints from five unrelated producers. Mean word-bigram recall **0.974** and
 word-set Jaccard **0.960** on the arXiv set, **0.995** and **0.992** on bioRxiv. `corpus_diverse/`
 holds that harness, and says what it does and does not tell you.
 
@@ -122,7 +132,7 @@ How well those characters then *convert* to Markdown is a separate question, bel
 consumer rather than to a parser. Measured as the backend for `rustypaper` across its
 ten-paper corpus, against that project's recorded pdfium baseline: prose bigram recall **0.891**
 (pdfium 0.894), equation recall **0.370** (pdfium 0.375), equation fidelity **0.547** (pdfium
-0.557). That corpus passes all 31 of its integration tests on either backend, and rustium
+0.557). That corpus passes all 31 of its integration tests on either backend, and rustium-pdf
 converts it in 2.06 s against pdfium's 1.94 s while holding 63 MB of resident memory against
 pdfium's 95 MB. Those figures are quoted only to show this crate is not the limiting factor:
 equation recall landing within 0.005 of pdfium places that ceiling in the consumer's equation

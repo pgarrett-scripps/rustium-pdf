@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Agreement between rustium and an independent extractor, per document.
+"""Agreement between rustium-pdf and an independent extractor, per document.
 
 There is no ground truth for an arbitrary user-uploaded PDF, but there are several mature,
-independently-written extractors. Where rustium and one of them agree on a document's prose,
+independently-written extractors. Where rustium-pdf and one of them agree on a document's prose,
 both are almost certainly right; where they diverge sharply, something is wrong in one of them
 and the document is worth a human look. That turns "is this correct?" — unanswerable at scale —
 into "does this disagree?", which is cheap and runs on any file.
@@ -37,7 +37,8 @@ def bigrams(words: list[str]) -> set[tuple[str, str]]:
 
 
 def reference(path: Path) -> str:
-    # -layout keeps reading order closer to the page, which matters for bigrams.
+    # -raw emits content-stream order, which is what this crate emits; -layout would sort
+    # geometrically and report a reading-order difference as a character-level defect.
     out = subprocess.run(
         ["pdftotext", "-raw", "-q", str(path), "-"],
         capture_output=True, timeout=180,

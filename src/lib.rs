@@ -1,9 +1,13 @@
 //! # rustium-pdf
 //!
 //! Pure-Rust extraction of PDF page primitives — glyphs with geometry, vector paths, images —
-//! plus page rendering. A thread-safe replacement for the slice of pdfium that
-//! `rustypaper` uses, with the same observable semantics where downstream code depends
-//! on them (generated space glyphs, soft-hyphen stripping, y-down page space helpers).
+//! plus page rendering. No C library, no FFI, no global state.
+//!
+//! This is the default PDF backend of [rustypaper], where it took over the slice of pdfium that
+//! project used to require. Observable semantics match pdfium's where downstream code depends on
+//! them: generated space glyphs, soft-hyphen stripping, y-down page space helpers.
+//!
+//! [rustypaper]: https://github.com/pgarrett-scripps/rustypaper
 //!
 //! ```no_run
 //! # fn main() -> rustium_pdf::Result<()> {

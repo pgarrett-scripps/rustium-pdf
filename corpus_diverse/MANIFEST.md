@@ -21,9 +21,10 @@ The line is worth stating precisely, because it is easy to blur:
 
 ## Why these files
 
-The arXiv corpus in `rustypaper/corpus` is ten papers and **all ten are pdfTeX**. A
-producer monoculture hides producer-specific bugs: two word-segmentation defects survived that
-corpus and were found within minutes by the files below.
+The arXiv corpus in `rustypaper/corpus` is ten papers and **all ten come out of TeX** — six
+report `pdfTeX` directly, the other four arXiv's `tex2pdf` rewrapped by `pikepdf`. A producer
+monoculture hides producer-specific bugs: two word-segmentation defects survived that corpus and
+were found within minutes by the files below.
 
 These are bioRxiv preprints, chosen for producer spread rather than subject matter. bioRxiv
 accepts Word submissions and renders them, so its output comes from a completely different
@@ -36,7 +37,7 @@ population of tools than arXiv's.
 | bio02.pdf | Zamzar | Zamzar (online converter) |
 | bio03.pdf | Microsoft Word | Microsoft |
 | bio04.pdf | Appligent AppendPDF Pro 5.5 | Acrobat Distiller 8.1.0 (Windows) |
-| bio05.pdf | Word | — |
+| bio05.pdf | Word | macOS Quartz 15.5 (Japanese locale) |
 | bio06.pdf | Word | macOS Quartz 15.7.7 |
 | bio07.pdf | CANVAS X 2020 | Canvas GFX PDF Filter 1.5 |
 
