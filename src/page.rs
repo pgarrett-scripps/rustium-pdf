@@ -255,6 +255,41 @@ impl Page {
             .concat(&Matrix::scale(scale, scale))
     }
 
+    /// Whether this page looks like a scan: a page-sized image and no text worth speaking of.
+    ///
+    /// Reading a scan needs OCR, which is out of scope — but a caller that cannot tell a scan
+    /// from a failed extraction reports an empty page as success, and a user who uploaded a
+    /// photocopied paper is told nothing at all. Detecting the case costs a comparison against
+    /// geometry already computed, and lets the caller say why it produced nothing.
+    ///
+    /// A page carrying an invisible OCR text layer is *not* reported as scanned: its text is
+    /// real and extraction works, which is the whole point of that layer.
+    pub fn is_likely_scanned(&self) -> bool {
+        const MIN_COVERAGE: f32 = 0.5;
+        const MAX_GLYPHS_PER_PAGE: usize = 32;
+
+        if self
+            .glyphs
+            .iter()
+            .filter(|g| !g.text.trim().is_empty())
+            .count()
+            > MAX_GLYPHS_PER_PAGE
+        {
+            return false;
+        }
+        let page = self.crop_box;
+        let area = page.width() * page.height();
+        if area <= 0.0 {
+            return false;
+        }
+        // One image covering most of the page, rather than the total over many, so that a
+        // figure-heavy page with little text is not mistaken for a scan.
+        self.images.iter().any(|img| {
+            let visible = img.bbox.intersect(&page);
+            !visible.is_empty() && (visible.width() * visible.height()) / area >= MIN_COVERAGE
+        })
+    }
+
     /// The page's text in content-stream order, with soft hyphens removed.
     ///
     /// Content order is the order operators appear, which is not always reading order; callers
@@ -302,7 +337,7 @@ fn starts_new_line(prev: &Glyph, g: &Glyph) -> bool {
 
     // A baseline shift of a third of an em is a new line; so is any backward jump larger than
     // one em, which is how a wrapped line returns to the left margin.
-    across.abs() > size * 0.33 || along < -size
+    across.abs() > size * 0.55 || along < -size
 }
 
 // ---- interpreter ----------------------------------------------------------------------------
@@ -591,9 +626,13 @@ impl<'a> Interpreter<'a> {
                 "BT" => {
                     text.matrix = Matrix::IDENTITY;
                     text.line_matrix = Matrix::IDENTITY;
-                    self.trail = None;
+                    // The pen trail deliberately survives BT/ET. A text object boundary says
+                    // nothing about the page: producers routinely wrap every table cell, and
+                    // sometimes every word, in its own BT. Clearing here loses the gap between
+                    // them and fuses adjacent cells into one token. Geometry decides instead —
+                    // a different baseline is a line break, a wide gap on one is a space.
                 }
-                "ET" => self.trail = None,
+                "ET" => {}
                 "Tc" => gs.char_spacing = n(0).unwrap_or(0.0),
                 "Tw" => gs.word_spacing = n(0).unwrap_or(0.0),
                 "Tz" => gs.horizontal_scale = n(0).unwrap_or(100.0) / 100.0,
@@ -1500,6 +1539,60 @@ pub(crate) mod tests {
         let doc =
             doc_with("BT /F1 12 Tf 1 0 0 1 300 720 Tm (end) Tj 1 0 0 1 72 720 Tm (start) Tj ET");
         assert_eq!(doc.page(0).unwrap().text(), "end\nstart");
+    }
+
+    #[test]
+    fn a_page_sized_image_with_no_text_reads_as_scanned() {
+        let doc =
+            doc_with("q 612 0 0 792 0 0 cm BI /W 4 /H 4 /BPC 8 /CS /G ID 0123456789abcdef EI Q");
+        assert!(doc.page(0).unwrap().is_likely_scanned());
+    }
+
+    #[test]
+    fn text_over_an_image_is_not_scanned() {
+        // A full-page figure with a caption, and an OCR text layer, must both extract normally.
+        let body = (0..40)
+            .map(|i| {
+                format!(
+                    "BT /F1 9 Tf 72 {} Td (line of real text) Tj ET",
+                    700 - i * 12
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let doc = doc_with(&format!(
+            "q 612 0 0 792 0 0 cm BI /W 4 /H 4 /BPC 8 /CS /G ID 0123456789abcdef EI Q {body}"
+        ));
+        assert!(!doc.page(0).unwrap().is_likely_scanned());
+    }
+
+    #[test]
+    fn an_ordinary_text_page_is_not_scanned() {
+        let doc = doc_with("BT /F1 12 Tf 72 720 Td (Hi) Tj ET");
+        assert!(!doc.page(0).unwrap().is_likely_scanned());
+    }
+
+    #[test]
+    fn cells_in_separate_text_objects_stay_separate_words() {
+        // Producers routinely wrap each table cell in its own BT/ET. The gap between them is
+        // the only thing separating the cells, so it has to survive the object boundary —
+        // otherwise a row fuses into one token.
+        let doc =
+            doc_with("BT /F1 10 Tf 72 700 Td (alpha) Tj ET BT /F1 10 Tf 300 700 Td (beta) Tj ET");
+        let text = doc.page(0).unwrap().text();
+        assert!(
+            text.contains("alpha") && text.contains("beta") && !text.contains("alphabeta"),
+            "cells fused: {text:?}"
+        );
+    }
+
+    #[test]
+    fn a_superscript_stays_on_its_line() {
+        // A footnote marker or exponent sits above the baseline but continues the line. Treating
+        // that shift as a line break splits `x2` into `x` and `2`, which is how sub- and
+        // superscripts get separated from what they modify all through a mathematics paper.
+        let doc = doc_with("BT /F1 10 Tf 72 700 Td (x) Tj 4 Ts /F1 7 Tf (2) Tj ET");
+        assert_eq!(doc.page(0).unwrap().text(), "x2");
     }
 
     #[test]

@@ -77,6 +77,22 @@ of what each code means, so the builtin `/Encoding` array is read out of the pro
 header, ahead of `eexec`. Skipping that step is not a partial loss: every glyph on such a page
 lands in exactly the right place carrying no text at all.
 
+## Scope
+
+This is built for **academic paper extraction** — preprints and journal PDFs with a real text
+layer. That focus is deliberate, and the following are explicit non-goals:
+
+- **Scanned and image-only pages.** Reading them needs OCR. [`Page::is_likely_scanned`] reports
+  the case so a caller can say why a document yielded nothing, rather than returning an empty
+  page as though it had succeeded. A page carrying an invisible OCR text layer is ordinary text
+  and extracts normally.
+- **Reading order.** Primitives come out in content-stream order with their geometry attached.
+  Ordering a two-column page is layout, and belongs to the consumer.
+- **Forms, annotations, tagged-PDF structure and JavaScript.**
+
+Encrypted documents *are* handled — publisher-typeset PDFs are routinely encrypted with an empty
+user password, so refusing them would refuse ordinary papers.
+
 ## Known gaps
 
 - Type1 `/FontFile` programs yield metrics, encodings and text, but no outlines — their
