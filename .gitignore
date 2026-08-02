@@ -8,3 +8,6 @@
 
 # Rendered output from the examples
 *.png
+
+# Third-party test PDFs: fetched on demand, never committed (see corpus_diverse/fetch.sh)
+corpus_diverse/*.pdf
