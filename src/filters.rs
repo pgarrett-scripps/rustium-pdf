@@ -19,11 +19,7 @@ pub struct Decoded {
 ///
 /// `resolve` maps indirect objects to direct ones, since `/Filter`, `/DecodeParms` and their
 /// members may all be references.
-pub fn decode(
-    dict: &Dict,
-    data: &[u8],
-    resolve: &dyn Fn(&Object) -> Object,
-) -> Result<Decoded> {
+pub fn decode(dict: &Dict, data: &[u8], resolve: &dyn Fn(&Object) -> Object) -> Result<Decoded> {
     let filters = filter_names(dict, resolve);
     let parms = decode_parms(dict, filters.len(), resolve);
 
@@ -118,7 +114,10 @@ fn inflate(data: &[u8]) -> Result<Vec<u8>> {
     use flate2::{Decompress, FlushDecompress, Status};
 
     // Skip leading whitespace some producers leave before the zlib header.
-    let start = data.iter().position(|&b| !b.is_ascii_whitespace()).unwrap_or(0);
+    let start = data
+        .iter()
+        .position(|&b| !b.is_ascii_whitespace())
+        .unwrap_or(0);
     let data = &data[start..];
 
     let zlib = data.first().is_some_and(|&b| b & 0x0f == 8);

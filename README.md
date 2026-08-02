@@ -1,4 +1,4 @@
-# rustium
+# rustium-pdf
 
 Pure-Rust extraction of PDF page primitives — glyphs with geometry, vector paths, images — plus
 page rendering. A thread-safe replacement for the slice of [pdfium](https://pdfium.googlesource.com/pdfium/)
@@ -8,10 +8,21 @@ soft-hyphen stripping, and y-down page-space helpers.
 
 No C library, no FFI, no global state.
 
+## Install
+
+```toml
+[dependencies]
+rustium-pdf = "0.1"
+```
+
+The package is `rustium-pdf`; the crate imports as `rustium_pdf`.
+
+Minimum supported Rust version is **1.88**, set by the `image` dependency and verified in CI.
+
 ## Usage
 
 ```rust
-let doc = rustium::Document::open("paper.pdf")?;
+let doc = rustium_pdf::Document::open("paper.pdf")?;
 let page = doc.page(0)?;
 
 // Primitives are in user space (y-up); `page_matrix` converts to y-down device space.
@@ -20,7 +31,7 @@ for glyph in page.glyphs.iter().filter(|g| g.is_visible()) {
         glyph.text, glyph.origin, glyph.font_size, glyph.flags.is_bold());
 }
 
-let png = page.render(&doc, rustium::RenderOptions::at_dpi(150.0))?.to_png()?;
+let png = page.render(&doc, rustium_pdf::RenderOptions::at_dpi(150.0))?.to_png()?;
 ```
 
 Two examples are included:

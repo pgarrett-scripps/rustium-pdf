@@ -187,7 +187,12 @@ pub fn is_standard_font(base_font: &str) -> bool {
     let name = base_font.split('+').next_back().unwrap_or(base_font);
     let lower = name.to_ascii_lowercase();
     [
-        "helvetica", "courier", "times", "symbol", "zapfdingbats", "arial",
+        "helvetica",
+        "courier",
+        "times",
+        "symbol",
+        "zapfdingbats",
+        "arial",
     ]
     .iter()
     .any(|f| lower.contains(f))

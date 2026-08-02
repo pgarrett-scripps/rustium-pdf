@@ -8,7 +8,7 @@ fn main() {
     };
     let only: Option<usize> = args.next().and_then(|s| s.parse().ok());
 
-    let doc = match rustium::Document::open(&path) {
+    let doc = match rustium_pdf::Document::open(&path) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("{path}: {e}");

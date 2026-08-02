@@ -63,7 +63,10 @@ impl CodeSpace {
 }
 
 fn be(bytes: &[u8]) -> u32 {
-    bytes.iter().take(4).fold(0u32, |acc, &b| (acc << 8) | b as u32)
+    bytes
+        .iter()
+        .take(4)
+        .fold(0u32, |acc, &b| (acc << 8) | b as u32)
 }
 
 /// A parsed CMap: code → CID and/or code → Unicode.
@@ -138,8 +141,7 @@ impl CMap {
                 }
                 "endcidrange" => {
                     for triple in op.operands.chunks(3) {
-                        if let [Object::String(lo), Object::String(hi), Object::Int(cid)] = triple
-                        {
+                        if let [Object::String(lo), Object::String(hi), Object::Int(cid)] = triple {
                             map.cid_ranges.push((be(lo), be(hi), *cid as u32));
                         }
                     }
@@ -161,11 +163,9 @@ impl CMap {
             // A ToUnicode map without codespace: infer byte length from the widest key.
             let wide = map.uni_singles.keys().any(|&k| k > 0xFF)
                 || map.uni_ranges.iter().any(|&(_, hi, _)| hi > 0xFF);
-            map.codespace.ranges.push(if wide {
-                (0, 0xFFFF, 2)
-            } else {
-                (0, 0xFF, 1)
-            });
+            map.codespace
+                .ranges
+                .push(if wide { (0, 0xFFFF, 2) } else { (0, 0xFF, 1) });
         }
         map
     }
@@ -216,7 +216,10 @@ impl CMap {
 
 fn non_empty(s: String) -> Option<String> {
     // Some producers map unmappable glyphs to U+0000 or the empty string; that is "no mapping".
-    let s: String = s.chars().filter(|&c| c != '\0' && c != '\u{FFFD}').collect();
+    let s: String = s
+        .chars()
+        .filter(|&c| c != '\0' && c != '\u{FFFD}')
+        .collect();
     (!s.is_empty()).then_some(s)
 }
 
@@ -280,7 +283,10 @@ end end
     #[test]
     fn codespace_decodes_two_byte() {
         let m = CMap::parse(TOUNICODE);
-        assert_eq!(m.codespace.decode(&[0x00, 0x0F, 0x00, 0x12]), vec![0x0F, 0x12]);
+        assert_eq!(
+            m.codespace.decode(&[0x00, 0x0F, 0x00, 0x12]),
+            vec![0x0F, 0x12]
+        );
     }
 
     #[test]
@@ -288,7 +294,10 @@ end end
         let mut cs = CodeSpace::default();
         cs.push(&[0x00], &[0x80]);
         cs.push(&[0x81, 0x40], &[0xFE, 0xFE]);
-        assert_eq!(cs.decode(&[0x41, 0x81, 0x41, 0x42]), vec![0x41, 0x8141, 0x42]);
+        assert_eq!(
+            cs.decode(&[0x41, 0x81, 0x41, 0x42]),
+            vec![0x41, 0x8141, 0x42]
+        );
     }
 
     #[test]
@@ -314,6 +323,9 @@ endcidchar
     fn identity() {
         let m = CMap::identity();
         assert_eq!(m.cid(0x1234), 0x1234);
-        assert_eq!(m.codespace.decode(&[0x12, 0x34, 0x00, 0x41]), vec![0x1234, 0x41]);
+        assert_eq!(
+            m.codespace.decode(&[0x12, 0x34, 0x00, 0x41]),
+            vec![0x1234, 0x41]
+        );
     }
 }

@@ -1,12 +1,18 @@
 [package]
-name = "rustium"
+name = "rustium-pdf"
 description = "Pure-Rust PDF page-primitive extraction and rendering: a thread-safe replacement for the pdfium surface used by rustypdf2markdown."
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
-keywords = ["pdf", "parser", "text-extraction", "render"]
-categories = ["parser-implementations", "text-processing"]
+readme = "README.md"
+repository = "https://github.com/pgarrett-scripps/rustium"
+homepage = "https://github.com/pgarrett-scripps/rustium"
+documentation = "https://docs.rs/rustium-pdf"
+keywords = ["pdf", "parser", "text-extraction", "render", "fonts"]
+categories = ["parser-implementations", "text-processing", "rendering"]
+# The published tarball carries the library and its examples, nothing else.
+exclude = ["/.github", "/target", "*.png", "*.pdf"]
 
 [dependencies]
 flate2 = "1"
@@ -19,3 +25,6 @@ aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
 
 [dev-dependencies]
+
+[package.metadata.docs.rs]
+all-features = true

@@ -3,9 +3,7 @@
 //! Everything here serves `Decryptor`, which the file parser consults while loading objects.
 //! Only password-based encryption is implemented; certificate-based files are refused.
 
-use aes::cipher::{
-    block_padding::NoPadding, BlockDecryptMut, BlockEncryptMut, KeyIvInit,
-};
+use aes::cipher::{block_padding::NoPadding, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use md5::{Digest, Md5};
 use sha2::{Sha256, Sha384, Sha512};
 
@@ -13,9 +11,8 @@ use crate::error::{Error, Result};
 use crate::object::{Dict, Object};
 
 const PAD: [u8; 32] = [
-    0x28, 0xBF, 0x4E, 0x5E, 0x4E, 0x75, 0x8A, 0x41, 0x64, 0x00, 0x4E, 0x56, 0xFF, 0xFA, 0x01,
-    0x08, 0x2E, 0x2E, 0x00, 0xB6, 0xD0, 0x68, 0x3E, 0x80, 0x2F, 0x0C, 0xA9, 0xFE, 0x64, 0x53,
-    0x69, 0x7A,
+    0x28, 0xBF, 0x4E, 0x5E, 0x4E, 0x75, 0x8A, 0x41, 0x64, 0x00, 0x4E, 0x56, 0xFF, 0xFA, 0x01, 0x08,
+    0x2E, 0x2E, 0x00, 0xB6, 0xD0, 0x68, 0x3E, 0x80, 0x2F, 0x0C, 0xA9, 0xFE, 0x64, 0x53, 0x69, 0x7A,
 ];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -52,27 +49,34 @@ impl Decryptor {
         let v = get("V").and_then(|o| o.as_int()).unwrap_or(0);
         let r = get("R").and_then(|o| o.as_int()).unwrap_or(0);
         let length_bits = get("Length").and_then(|o| o.as_int()).unwrap_or(40);
-        let o_entry = get("O").and_then(|o| o.as_string().map(<[u8]>::to_vec)).unwrap_or_default();
-        let u_entry = get("U").and_then(|o| o.as_string().map(<[u8]>::to_vec)).unwrap_or_default();
+        let o_entry = get("O")
+            .and_then(|o| o.as_string().map(<[u8]>::to_vec))
+            .unwrap_or_default();
+        let u_entry = get("U")
+            .and_then(|o| o.as_string().map(<[u8]>::to_vec))
+            .unwrap_or_default();
         let p = get("P").and_then(|o| o.as_int()).unwrap_or(-1) as i32;
-        let encrypt_metadata = get("EncryptMetadata").and_then(|o| o.as_bool()).unwrap_or(true);
+        let encrypt_metadata = get("EncryptMetadata")
+            .and_then(|o| o.as_bool())
+            .unwrap_or(true);
         let password = password.unwrap_or("");
 
         // Crypt-filter ciphers for V4/V5; earlier versions are RC4 throughout.
         let (string_cipher, stream_cipher) = if v >= 4 {
-            let cf = get("CF").and_then(|o| o.as_dict().cloned()).unwrap_or_default();
+            let cf = get("CF")
+                .and_then(|o| o.as_dict().cloned())
+                .unwrap_or_default();
             let cipher_of = |name: Option<String>| -> Cipher {
-                let Some(name) = name else { return Cipher::Identity };
+                let Some(name) = name else {
+                    return Cipher::Identity;
+                };
                 if name == "Identity" {
                     return Cipher::Identity;
                 }
                 let cfm = cf
                     .get(&name)
                     .map(resolve)
-                    .and_then(|o| {
-                        o.as_dict()
-                            .and_then(|d| d.get("CFM").map(resolve))
-                    })
+                    .and_then(|o| o.as_dict().and_then(|d| d.get("CFM").map(resolve)))
                     .and_then(|o| o.as_name().map(str::to_owned));
                 match cfm.as_deref() {
                     Some("V2") => Cipher::Rc4,
@@ -88,8 +92,12 @@ impl Decryptor {
         };
 
         if v == 5 || r >= 5 {
-            let oe = get("OE").and_then(|o| o.as_string().map(<[u8]>::to_vec)).unwrap_or_default();
-            let ue = get("UE").and_then(|o| o.as_string().map(<[u8]>::to_vec)).unwrap_or_default();
+            let oe = get("OE")
+                .and_then(|o| o.as_string().map(<[u8]>::to_vec))
+                .unwrap_or_default();
+            let ue = get("UE")
+                .and_then(|o| o.as_string().map(<[u8]>::to_vec))
+                .unwrap_or_default();
             let key = derive_key_v5(password, r, &o_entry, &u_entry, &oe, &ue)?;
             return Ok(Self {
                 key,
@@ -103,7 +111,11 @@ impl Decryptor {
         if !(1..=4).contains(&v) {
             return Err(Error::UnsupportedEncryption(format!("V {v}")));
         }
-        let key_len = if r == 2 { 5 } else { (length_bits / 8).clamp(5, 16) as usize };
+        let key_len = if r == 2 {
+            5
+        } else {
+            (length_bits / 8).clamp(5, 16) as usize
+        };
 
         // Try the password as the user password, then as the owner password.
         let user_key = legacy_file_key(
@@ -125,8 +137,15 @@ impl Decryptor {
             });
         }
         let recovered = legacy_owner_to_user(password.as_bytes(), &o_entry, r, key_len);
-        let owner_key =
-            legacy_file_key(&recovered, &o_entry, p, file_id, r, key_len, encrypt_metadata);
+        let owner_key = legacy_file_key(
+            &recovered,
+            &o_entry,
+            p,
+            file_id,
+            r,
+            key_len,
+            encrypt_metadata,
+        );
         if legacy_check_user(&owner_key, &u_entry, file_id, r) {
             return Ok(Self {
                 key: owner_key,
@@ -165,7 +184,10 @@ impl Decryptor {
 
     /// Whether a stream of the given `/Type` is encrypted at all.
     pub fn stream_needs_decrypt(&self, stream_type: Option<&str>) -> bool {
-        !(stream_type == Some("Metadata") && !self.encrypt_metadata)
+        // A document may declare that its metadata stays in the clear; every other stream is
+        // encrypted. Naming the exemption keeps the negation readable.
+        let metadata_exempt = stream_type == Some("Metadata") && !self.encrypt_metadata;
+        !metadata_exempt
     }
 
     fn decrypt(&self, cipher: Cipher, num: u32, gen: u16, data: &[u8]) -> Vec<u8> {
@@ -352,9 +374,7 @@ pub fn rc4(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut s: [u8; 256] = std::array::from_fn(|i| i as u8);
     let mut j = 0u8;
     for i in 0..256 {
-        j = j
-            .wrapping_add(s[i])
-            .wrapping_add(key[i % key.len().max(1)]);
+        j = j.wrapping_add(s[i]).wrapping_add(key[i % key.len().max(1)]);
         s.swap(i, j as usize);
     }
     let (mut i, mut j) = (0u8, 0u8);
@@ -370,7 +390,7 @@ pub fn rc4(key: &[u8], data: &[u8]) -> Vec<u8> {
 
 /// AES-CBC with the IV in the first block, PKCS#5 padding stripped leniently.
 fn aes_cbc_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
-    if data.len() < 32 || (data.len() - 16) % 16 != 0 {
+    if data.len() < 32 || !(data.len() - 16).is_multiple_of(16) {
         return Vec::new();
     }
     let (iv, body) = data.split_at(16);
@@ -397,7 +417,7 @@ fn aes_cbc_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
 }
 
 fn aes256_cbc_no_pad_decrypt(key: &[u8; 32], iv: &[u8; 16], data: &[u8]) -> Result<Vec<u8>> {
-    if data.len() % 16 != 0 || data.is_empty() {
+    if !data.len().is_multiple_of(16) || data.is_empty() {
         return Err(Error::UnsupportedEncryption("bad OE/UE length".into()));
     }
     let mut buf = data.to_vec();

@@ -192,12 +192,15 @@ fn paint_for(color: [f32; 3], alpha: f32) -> Paint<'static> {
         anti_alias: true,
         ..Default::default()
     };
-    paint.shader = Shader::SolidColor(tiny_skia::Color::from_rgba(
-        color[0].clamp(0.0, 1.0),
-        color[1].clamp(0.0, 1.0),
-        color[2].clamp(0.0, 1.0),
-        alpha.clamp(0.0, 1.0),
-    ).unwrap_or(tiny_skia::Color::BLACK));
+    paint.shader = Shader::SolidColor(
+        tiny_skia::Color::from_rgba(
+            color[0].clamp(0.0, 1.0),
+            color[1].clamp(0.0, 1.0),
+            color[2].clamp(0.0, 1.0),
+            alpha.clamp(0.0, 1.0),
+        )
+        .unwrap_or(tiny_skia::Color::BLACK),
+    );
     paint
 }
 
@@ -440,8 +443,16 @@ mod tests {
         let page = doc.page(0).unwrap();
         let img = page.render(&doc, RenderOptions::at_dpi(72.0)).unwrap();
         assert_eq!((img.width, img.height), (612, 792));
-        assert_eq!(px(&img, 50, 742), (0, 0, 255, 255), "box should be bottom-left");
-        assert_eq!(px(&img, 50, 50), (255, 255, 255, 255), "top-left is background");
+        assert_eq!(
+            px(&img, 50, 742),
+            (0, 0, 255, 255),
+            "box should be bottom-left"
+        );
+        assert_eq!(
+            px(&img, 50, 50),
+            (255, 255, 255, 255),
+            "top-left is background"
+        );
     }
 
     #[test]
@@ -517,7 +528,11 @@ mod tests {
             .unwrap();
         // The box still paints; nothing dark remains where the text was.
         assert_eq!(px(&img, 50, 742), (0, 0, 255, 255));
-        let dark = img.rgba.chunks(4).filter(|p| p[0] < 128 && p[2] < 128).count();
+        let dark = img
+            .rgba
+            .chunks(4)
+            .filter(|p| p[0] < 128 && p[2] < 128)
+            .count();
         assert_eq!(dark, 0, "text should be suppressed");
     }
 
@@ -534,7 +549,11 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(px(&img, 50, 50).3, 0, "unpainted area should be transparent");
+        assert_eq!(
+            px(&img, 50, 50).3,
+            0,
+            "unpainted area should be transparent"
+        );
         assert_eq!(px(&img, 50, 742), (0, 0, 255, 255));
     }
 

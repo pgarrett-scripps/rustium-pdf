@@ -4,14 +4,17 @@
 //! cross-reference keywords) and the content-stream tokenizer (which additionally understands
 //! operators). Both share the object grammar, which lives here.
 
-use crate::object::{Dict, Object, ObjRef, Stream};
+use crate::object::{Dict, ObjRef, Object, Stream};
 
 pub fn is_whitespace(b: u8) -> bool {
     matches!(b, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' ')
 }
 
 pub fn is_delimiter(b: u8) -> bool {
-    matches!(b, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%')
+    matches!(
+        b,
+        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+    )
 }
 
 pub fn is_regular(b: u8) -> bool {
@@ -364,13 +367,14 @@ impl<'a> Cursor<'a> {
         let start = self.pos;
 
         let end = match length {
-            Some(len) if start + len <= self.data.len() && {
-                // Trust /Length only when `endstream` actually follows it (after optional EOL);
-                // broken producers write lengths that are off by the EOL convention or worse.
-                let mut c = Cursor::at(self.data, start + len);
-                c.skip_ws();
-                c.eat_keyword(b"endstream")
-            } =>
+            Some(len)
+                if start + len <= self.data.len() && {
+                    // Trust /Length only when `endstream` actually follows it (after optional EOL);
+                    // broken producers write lengths that are off by the EOL convention or worse.
+                    let mut c = Cursor::at(self.data, start + len);
+                    c.skip_ws();
+                    c.eat_keyword(b"endstream")
+                } =>
             {
                 start + len
             }

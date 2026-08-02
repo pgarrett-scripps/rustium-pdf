@@ -1,4 +1,4 @@
-//! # rustium
+//! # rustium-pdf
 //!
 //! Pure-Rust extraction of PDF page primitives — glyphs with geometry, vector paths, images —
 //! plus page rendering. A thread-safe replacement for the slice of pdfium that
@@ -6,8 +6,8 @@
 //! on them (generated space glyphs, soft-hyphen stripping, y-down page space helpers).
 //!
 //! ```no_run
-//! # fn main() -> rustium::Result<()> {
-//! let doc = rustium::Document::open("paper.pdf")?;
+//! # fn main() -> rustium_pdf::Result<()> {
+//! let doc = rustium_pdf::Document::open("paper.pdf")?;
 //! let page = doc.page(0)?;
 //!
 //! // Primitives are in user space (y-up); `page_matrix` converts to y-down device space.
@@ -16,7 +16,7 @@
 //!         glyph.text, glyph.origin, glyph.font_size, glyph.flags.is_bold());
 //! }
 //!
-//! let png = page.render(&doc, rustium::RenderOptions::at_dpi(150.0))?.to_png()?;
+//! let png = page.render(&doc, rustium_pdf::RenderOptions::at_dpi(150.0))?.to_png()?;
 //! # Ok(())
 //! # }
 //! ```

@@ -121,9 +121,11 @@ fn derive_flags(doc: &Document, descriptor: Option<&Dict>, base_font: &str) -> F
     flags.set(FontFlags::SYMBOLIC, symbolic);
 
     let serif = raw & desc_flag::SERIF != 0
-        || ["times", "roman", "georgia", "garamond", "minion", "cambria", "book"]
-            .iter()
-            .any(|f| name.contains(f));
+        || [
+            "times", "roman", "georgia", "garamond", "minion", "cambria", "book",
+        ]
+        .iter()
+        .any(|f| name.contains(f));
     flags.set(FontFlags::SERIF, serif);
     flags.set(FontFlags::SANS_SERIF, !serif && !symbolic);
 
@@ -149,7 +151,10 @@ fn derive_flags(doc: &Document, descriptor: Option<&Dict>, base_font: &str) -> F
         || name.contains("heavy");
     flags.set(FontFlags::BOLD, bold);
 
-    flags.set(FontFlags::CURSIVE, raw & desc_flag::SCRIPT != 0 || name.contains("script"));
+    flags.set(
+        FontFlags::CURSIVE,
+        raw & desc_flag::SCRIPT != 0 || name.contains("script"),
+    );
     flags.set(FontFlags::ALL_CAPS, raw & desc_flag::ALL_CAP != 0);
     flags.set(FontFlags::SMALL_CAPS, raw & desc_flag::SMALL_CAP != 0);
     flags
@@ -556,7 +561,11 @@ impl Font {
     }
 
     /// Resolves a code to a glyph id in an sfnt program.
-    fn sfnt_glyph_id(&self, face: &ttf_parser::Face, item: &CodeItem) -> Option<ttf_parser::GlyphId> {
+    fn sfnt_glyph_id(
+        &self,
+        face: &ttf_parser::Face,
+        item: &CodeItem,
+    ) -> Option<ttf_parser::GlyphId> {
         if self.composite.is_some() {
             return Some(ttf_parser::GlyphId(self.composite_gid(item.cid)));
         }
@@ -845,7 +854,11 @@ fn simple_widths(doc: &Document, dict: &Dict, descriptor: Option<&Dict>) -> Widt
         .dict_get(dict, "Widths")
         .as_ref()
         .and_then(|o| o.as_array())
-        .map(|a| a.iter().map(|o| doc.resolve(o).as_f32().unwrap_or(0.0)).collect())
+        .map(|a| {
+            a.iter()
+                .map(|o| doc.resolve(o).as_f32().unwrap_or(0.0))
+                .collect()
+        })
         .unwrap_or_default();
     let missing = descriptor
         .and_then(|d| doc.dict_get(d, "MissingWidth"))

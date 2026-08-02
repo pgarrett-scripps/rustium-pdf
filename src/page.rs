@@ -562,7 +562,10 @@ impl<'a> Interpreter<'a> {
                 "Tz" => gs.horizontal_scale = n(0).unwrap_or(100.0) / 100.0,
                 "TL" => gs.leading = n(0).unwrap_or(0.0),
                 "Ts" => gs.rise = n(0).unwrap_or(0.0),
-                "Tr" => gs.render_mode = op.operands.first().and_then(|o| o.as_int()).unwrap_or(0) as i32,
+                "Tr" => {
+                    gs.render_mode =
+                        op.operands.first().and_then(|o| o.as_int()).unwrap_or(0) as i32
+                }
                 "Tf" => {
                     gs.font_size = n(1).unwrap_or(0.0);
                     if let Some(name) = op.operands.first().and_then(|o| o.as_name()) {
@@ -625,10 +628,8 @@ impl<'a> Interpreter<'a> {
                             other => {
                                 if let Some(adj) = other.as_f32() {
                                     // A positive number moves left, hence the negation.
-                                    let tx =
-                                        -adj / 1000.0 * gs.font_size * gs.horizontal_scale;
-                                    text.matrix =
-                                        Matrix::translate(tx, 0.0).concat(&text.matrix);
+                                    let tx = -adj / 1000.0 * gs.font_size * gs.horizontal_scale;
+                                    text.matrix = Matrix::translate(tx, 0.0).concat(&text.matrix);
                                 }
                             }
                         }
@@ -686,7 +687,11 @@ impl<'a> Interpreter<'a> {
 
             let advance_text = (item.width / 1000.0 * gs.font_size
                 + gs.char_spacing
-                + if item.is_word_space { gs.word_spacing } else { 0.0 })
+                + if item.is_word_space {
+                    gs.word_spacing
+                } else {
+                    0.0
+                })
                 * gs.horizontal_scale;
 
             self.emit_glyph(&font, &item, &trm, gs, advance_text);
@@ -1003,9 +1008,7 @@ impl<'a> Interpreter<'a> {
         let subtype = stream.dict.get("Subtype").and_then(|o| o.as_name());
 
         match subtype {
-            Some("Image") => {
-                self.record_image(name, stream, entry.as_ref_id(), gs)
-            }
+            Some("Image") => self.record_image(name, stream, entry.as_ref_id(), gs),
             Some("Form") => {
                 // A form that draws itself would recurse forever.
                 if let Some(num) = obj_num {
@@ -1102,7 +1105,10 @@ impl<'a> Interpreter<'a> {
         let components = if is_mask {
             1
         } else {
-            let space = self.doc.dict_get(dict, "ColorSpace").unwrap_or(Object::Null);
+            let space = self
+                .doc
+                .dict_get(dict, "ColorSpace")
+                .unwrap_or(Object::Null);
             self.components_of(&space, 0).max(1) as u8
         };
 
@@ -1188,7 +1194,9 @@ impl<'a> Interpreter<'a> {
             Err(_) => return,
         };
         let source = ImageSource::Inline(Arc::new(data));
-        self.push_image("inline", gs, width, height, is_mask, bpc, components, source);
+        self.push_image(
+            "inline", gs, width, height, is_mask, bpc, components, source,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1382,7 +1390,8 @@ pub(crate) mod tests {
 
     #[test]
     fn inline_images_are_recorded() {
-        let doc = doc_with("q 100 0 0 50 10 10 cm BI /W 2 /H 2 /BPC 8 /CS /G ID \x01\x02\x03\x04 EI Q");
+        let doc =
+            doc_with("q 100 0 0 50 10 10 cm BI /W 2 /H 2 /BPC 8 /CS /G ID \x01\x02\x03\x04 EI Q");
         let page = doc.page(0).unwrap();
         assert_eq!(page.images.len(), 1);
         let img = &page.images[0];

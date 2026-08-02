@@ -188,7 +188,9 @@ mod tests {
         assert_eq!(serif_bold[0], "LiberationSerif-Bold.ttf");
         assert!(serif_bold.iter().any(|c| c == "DejaVuSerif-Bold.ttf"));
         // A styled request falls back to the upright face rather than to nothing.
-        assert!(serif_bold.iter().any(|c| c == "LiberationSerif-Regular.ttf"));
+        assert!(serif_bold
+            .iter()
+            .any(|c| c == "LiberationSerif-Regular.ttf"));
     }
 
     #[test]

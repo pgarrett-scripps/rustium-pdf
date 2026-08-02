@@ -60,10 +60,7 @@ impl Document {
 
     /// Loads one page and interprets its content streams into primitives.
     pub fn page(&self, index: usize) -> Result<Page> {
-        let node = self
-            .pages
-            .get(index)
-            .ok_or(Error::PageOutOfRange(index))?;
+        let node = self.pages.get(index).ok_or(Error::PageOutOfRange(index))?;
         Page::build(self, node, index)
     }
 
@@ -73,7 +70,9 @@ impl Document {
 
     /// Resolved value of `key` in `dict`.
     pub(crate) fn dict_get(&self, dict: &Dict, key: &str) -> Option<Object> {
-        dict.get(key).map(|o| self.resolve(o)).filter(|o| !o.is_null())
+        dict.get(key)
+            .map(|o| self.resolve(o))
+            .filter(|o| !o.is_null())
     }
 }
 
@@ -134,7 +133,11 @@ fn collect_pages(file: &PdfFile) -> Result<Vec<PageNode>> {
                 inh.crop_box = Some(rect);
             }
         }
-        if let Some(r) = dict.get("Rotate").map(|o| file.resolve(o)).and_then(|o| o.as_int()) {
+        if let Some(r) = dict
+            .get("Rotate")
+            .map(|o| file.resolve(o))
+            .and_then(|o| o.as_int())
+        {
             inh.rotate = Some(r);
         }
 

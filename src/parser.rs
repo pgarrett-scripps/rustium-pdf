@@ -9,7 +9,10 @@ use crate::crypt::Decryptor;
 use crate::error::{Error, Result};
 use crate::filters;
 use crate::lexer::{find, rfind, Cursor};
-use crate::object::{Dict, Object, ObjRef, Stream};
+use crate::object::{Dict, ObjRef, Object, Stream};
+
+/// The `(object number, byte offset)` index of one object stream's members.
+type ObjStmIndex = Arc<Vec<(u32, usize)>>;
 
 #[derive(Debug, Clone, Copy)]
 enum XrefEntry {
@@ -32,14 +35,15 @@ pub struct PdfFile {
     encrypt_ref: Option<ObjRef>,
     cache: Mutex<HashMap<u32, Arc<Object>>>,
     /// Decoded object streams, keyed by stream object number.
-    objstm_cache: Mutex<HashMap<u32, Arc<Vec<(u32, usize)>>>>,
+    objstm_cache: Mutex<HashMap<u32, ObjStmIndex>>,
     objstm_data: Mutex<HashMap<u32, Arc<[u8]>>>,
 }
 
 impl PdfFile {
     pub fn load(mut data: Vec<u8>, password: Option<&str>) -> Result<Self> {
         // The header may be preceded by junk; all offsets are then relative to `%PDF`.
-        let header = find(&data, 0, b"%PDF-").ok_or_else(|| Error::Parse("no %PDF header".into()))?;
+        let header =
+            find(&data, 0, b"%PDF-").ok_or_else(|| Error::Parse("no %PDF header".into()))?;
         if header > 0 {
             data.drain(..header);
         }
@@ -197,7 +201,9 @@ impl PdfFile {
         let _gen = c.read_regular();
         c.skip_ws();
         if !c.eat_keyword(b"obj") {
-            return Err(Error::Parse("startxref points at neither table nor stream".into()));
+            return Err(Error::Parse(
+                "startxref points at neither table nor stream".into(),
+            ));
         }
         let obj = c
             .read_object()
@@ -226,7 +232,12 @@ impl PdfFile {
             .dict
             .get("W")
             .and_then(|o| o.as_array())
-            .map(|a| a.iter().filter_map(|o| o.as_int()).map(|i| i.max(0) as usize).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|o| o.as_int())
+                    .map(|i| i.max(0) as usize)
+                    .collect()
+            })
             .unwrap_or_default();
         if w.len() < 3 {
             return Err(Error::Parse("xref stream missing /W".into()));
@@ -235,7 +246,11 @@ impl PdfFile {
         if row == 0 {
             return Err(Error::Parse("xref stream /W is all zero".into()));
         }
-        let size = stream.dict.get("Size").and_then(|o| o.as_int()).unwrap_or(0);
+        let size = stream
+            .dict
+            .get("Size")
+            .and_then(|o| o.as_int())
+            .unwrap_or(0);
         let index: Vec<i64> = stream
             .dict
             .get("Index")
@@ -243,9 +258,8 @@ impl PdfFile {
             .map(|a| a.iter().filter_map(|o| o.as_int()).collect())
             .unwrap_or_else(|| vec![0, size]);
 
-        let read_field = |bytes: &[u8]| -> u64 {
-            bytes.iter().fold(0u64, |acc, &b| (acc << 8) | b as u64)
-        };
+        let read_field =
+            |bytes: &[u8]| -> u64 { bytes.iter().fold(0u64, |acc, &b| (acc << 8) | b as u64) };
 
         let mut rows = content.chunks_exact(row);
         for pair in index.chunks(2) {
@@ -289,7 +303,10 @@ impl PdfFile {
         while let Some(hit) = find(data, pos, b"obj") {
             pos = hit + 3;
             // `obj` must be a standalone keyword.
-            if data.get(hit + 3).is_some_and(|&b| crate::lexer::is_regular(b)) {
+            if data
+                .get(hit + 3)
+                .is_some_and(|&b| crate::lexer::is_regular(b))
+            {
                 continue;
             }
             // Walk backwards over ws, generation digits, ws, object digits.
@@ -305,12 +322,19 @@ impl PdfFile {
                 if i == end {
                     return None;
                 }
-                let v = std::str::from_utf8(&data[i..end]).ok()?.parse::<u64>().ok()?;
+                let v = std::str::from_utf8(&data[i..end])
+                    .ok()?
+                    .parse::<u64>()
+                    .ok()?;
                 Some((i, v))
             };
-            let Some((gi, gen)) = step_back_digits(i) else { continue };
+            let Some((gi, gen)) = step_back_digits(i) else {
+                continue;
+            };
             i = gi;
-            let Some((ni, num)) = step_back_digits(i) else { continue };
+            let Some((ni, num)) = step_back_digits(i) else {
+                continue;
+            };
             if num > u32::MAX as u64 || gen > u16::MAX as u64 {
                 continue;
             }
@@ -526,7 +550,7 @@ impl PdfFile {
     // ---- object streams --------------------------------------------------------------------
 
     /// The `(object number, byte offset)` index of an object stream's members.
-    fn objstm_index(&self, stream_num: u32) -> Result<Arc<Vec<(u32, usize)>>> {
+    fn objstm_index(&self, stream_num: u32) -> Result<ObjStmIndex> {
         if let Some(hit) = self.objstm_cache.lock().unwrap().get(&stream_num) {
             return Ok(hit.clone());
         }
@@ -560,7 +584,9 @@ impl PdfFile {
             let num = Cursor::parse_number(c.read_regular()).and_then(|o| o.as_int());
             c.skip_ws();
             let off = Cursor::parse_number(c.read_regular()).and_then(|o| o.as_int());
-            let (Some(num), Some(off)) = (num, off) else { break };
+            let (Some(num), Some(off)) = (num, off) else {
+                break;
+            };
             if num >= 0 && off >= 0 {
                 pairs.push((num as u32, first + off as usize));
             }
@@ -656,8 +682,8 @@ pub(crate) mod tests {
         }
         let xref_at = out.len();
         out.extend_from_slice(b"xref\n0 6\n0000000000 65535 f \n");
-        for num in 1..6 {
-            out.extend_from_slice(format!("{:010} 00000 n \n", offsets[num]).as_bytes());
+        for offset in &offsets[1..6] {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
         }
         out.extend_from_slice(b"trailer\n<< /Size 6 /Root 1 0 R >>\n");
         out.extend_from_slice(format!("startxref\n{xref_at}\n%%EOF\n").as_bytes());
@@ -702,7 +728,9 @@ pub(crate) mod tests {
     #[test]
     fn wrong_length_falls_back_to_endstream_scan() {
         let pdf = tiny_pdf();
-        let s = String::from_utf8(pdf).unwrap().replace("/Length 33", "/Length 4");
+        let s = String::from_utf8(pdf)
+            .unwrap()
+            .replace("/Length 33", "/Length 4");
         let file = PdfFile::load(s.into_bytes(), None).unwrap();
         let content = file.get(4);
         let stream = content.as_stream().unwrap();

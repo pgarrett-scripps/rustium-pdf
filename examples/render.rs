@@ -10,11 +10,11 @@ fn main() {
     let dpi: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(150.0);
     let out = args.next().unwrap_or_else(|| "page.png".into());
 
-    let doc = rustium::Document::open(&path).expect("open");
+    let doc = rustium_pdf::Document::open(&path).expect("open");
     let page = doc.page(index).expect("page");
     let started = std::time::Instant::now();
     let image = page
-        .render(&doc, rustium::RenderOptions::at_dpi(dpi))
+        .render(&doc, rustium_pdf::RenderOptions::at_dpi(dpi))
         .expect("render");
     let elapsed = started.elapsed();
 
