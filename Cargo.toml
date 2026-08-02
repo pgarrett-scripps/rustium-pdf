@@ -11,8 +11,9 @@ homepage = "https://github.com/pgarrett-scripps/rustium"
 documentation = "https://docs.rs/rustium-pdf"
 keywords = ["pdf", "parser", "text-extraction", "render", "fonts"]
 categories = ["parser-implementations", "text-processing", "rendering"]
-# The published tarball carries the library and its examples, nothing else.
-exclude = ["/.github", "/target", "*.png", "*.pdf"]
+# The published tarball carries the library and its examples, nothing else. corpus_diverse is
+# development tooling — a Python scorer and a downloader — and has no business in a crate.
+exclude = ["/.github", "/target", "/corpus_diverse", "*.png", "*.pdf"]
 
 [dependencies]
 flate2 = "1"
