@@ -463,7 +463,7 @@ impl Font {
     fn unicode_for(&self, code: u32) -> Option<String> {
         if let Some(map) = &self.to_unicode {
             if let Some(s) = map.unicode(code) {
-                return Some(s);
+                return Some(undo_symbol_pua(&s));
             }
         }
         glyph_name_to_unicode(self.glyph_name(code))
@@ -724,6 +724,33 @@ fn symbol_cmap_lookup(face: &ttf_parser::Face, code: u32) -> Option<ttf_parser::
         }
     }
     None
+}
+
+/// Rewrites Microsoft's symbol-font private-use characters as the symbols they stand for.
+///
+/// A font with a `(3, 0)` symbol `cmap` addresses its glyphs at `0xF000 + code`, and producers —
+/// Word above all — write `/ToUnicode` maps that hand those private-use code points straight
+/// back out. The result is text made of U+F0xx: an equation reading `α = β` extracts as three
+/// characters from a range that means nothing to anyone.
+///
+/// The low byte is the original character code, so it is read through the Symbol encoding. Only
+/// U+F020..=U+F0FF is touched, which is the range that convention covers, and only when the
+/// lookup actually yields something — a font using the private-use area for its own purposes
+/// keeps whatever it had.
+fn undo_symbol_pua(text: &str) -> String {
+    if !text.chars().any(|c| ('\u{F020}'..='\u{F0FF}').contains(&c)) {
+        return text.to_string();
+    }
+    text.chars()
+        .map(|c| {
+            if !('\u{F020}'..='\u{F0FF}').contains(&c) {
+                return c.to_string();
+            }
+            let code = (u32::from(c) & 0xFF) as u8;
+            let name = base_encoding_name(Encoding::Symbol, code);
+            glyph_name_to_unicode(name).unwrap_or_else(|| c.to_string())
+        })
+        .collect()
 }
 
 /// Bridges `ttf-parser`'s outline callbacks into our own path builder.
@@ -1003,4 +1030,45 @@ fn cid_widths(doc: &Document, descendant: &Dict) -> Widths {
         }
     }
     Widths::Cid { default, map }
+}
+
+#[cfg(test)]
+mod symbol_pua_tests {
+    use super::undo_symbol_pua;
+
+    #[test]
+    fn microsofts_symbol_range_becomes_real_characters() {
+        // Word writes a /ToUnicode that hands back 0xF000 + code for a symbol font, so an
+        // equation reading "α = β" arrives as three private-use code points.
+        assert_eq!(undo_symbol_pua("\u{F061}"), "α");
+        assert_eq!(undo_symbol_pua("\u{F062}"), "β");
+        // The Adobe list maps the name `mu` to U+00B5 MICRO SIGN rather than to U+03BC GREEK
+        // SMALL LETTER MU, and this follows it. The two render alike and NFKC folds one onto
+        // the other, so a consumer comparing text should normalise.
+        assert_eq!(undo_symbol_pua("\u{F06D}"), "\u{00B5}");
+        assert_eq!(undo_symbol_pua("\u{F03D}"), "=");
+        assert_eq!(undo_symbol_pua("\u{F061}\u{F03D}\u{F062}"), "α=β");
+    }
+
+    #[test]
+    fn ordinary_text_is_untouched() {
+        assert_eq!(undo_symbol_pua("hello"), "hello");
+        assert_eq!(undo_symbol_pua("α = β"), "α = β");
+        assert_eq!(undo_symbol_pua(""), "");
+    }
+
+    #[test]
+    fn private_use_outside_the_symbol_range_is_left_alone() {
+        // Fonts do legitimately use the private-use area for their own glyphs; only the
+        // 0xF020..=0xF0FF band carries Microsoft's convention.
+        assert_eq!(undo_symbol_pua("\u{E000}"), "\u{E000}");
+        assert_eq!(undo_symbol_pua("\u{F8FF}"), "\u{F8FF}");
+    }
+
+    #[test]
+    fn an_unmapped_symbol_slot_keeps_its_character() {
+        // 0xF010 is below the band, and a slot the Symbol encoding does not name must not be
+        // silently dropped.
+        assert_eq!(undo_symbol_pua("\u{F010}"), "\u{F010}");
+    }
 }

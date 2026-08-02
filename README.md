@@ -110,7 +110,7 @@ user password, so refusing them would refuse ordinary papers.
 
 ## Status
 
-91 tests. Verified against real-world documents at 100% glyph-outline resolution and roughly
+95 tests. Verified against real-world documents at 100% glyph-outline resolution and roughly
 17 ms/page rendering at 110 dpi.
 
 Parsing is measured by agreement with poppler over two corpora — ten arXiv papers and eight
