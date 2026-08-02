@@ -48,8 +48,8 @@ fn main() {
 
     let (mut total, mut unmapped) = (0usize, 0usize);
     println!(
-        "{:<40} {:>8} {:>9}  {}",
-        "font", "glyphs", "unmapped", "unmapped codes"
+        "{:<40} {:>8} {:>9}  unmapped codes",
+        "font", "glyphs", "unmapped"
     );
     println!("{}", "-".repeat(96));
     for (name, t) in &fonts {

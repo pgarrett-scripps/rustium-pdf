@@ -657,11 +657,6 @@ static AGL: &[(&str, char)] = &[
     ("z", 'z'), ("zcaron", 'ž'), ("zero", '0'), ("zeta", 'ζ'),
 ];
 
-/// Maps a glyph name to its Unicode string.
-///
-/// Resolution order mirrors the AGL specification: the list itself, `uniXXXX[XXXX...]`,
-/// `uXXXX`–`uXXXXXX`, then a suffix-stripped retry (`one.oldstyle` → `one`).
-
 /// Names used by TeX's mathematics fonts that no standard glyph list carries.
 ///
 /// The Adobe list covers text. TeX's `CMSY`, `CMEX` and the AMS fonts name symbols Adobe never
@@ -743,6 +738,11 @@ fn plain_lookup(name: &str) -> Option<String> {
         .map(|i| AGL[i].1.to_string())
 }
 
+/// Maps a glyph name to its Unicode string.
+///
+/// Resolution order mirrors the AGL specification: the list itself, `uniXXXX[XXXX...]`,
+/// `uXXXX`–`uXXXXXX`, then TeX's mathematics conventions, then a suffix-stripped retry
+/// (`one.oldstyle` → `one`).
 pub fn glyph_name_to_unicode(name: &str) -> Option<String> {
     if name.is_empty() || name == ".notdef" {
         return None;
