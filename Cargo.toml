@@ -1,13 +1,13 @@
 [package]
 name = "rustium-pdf"
-description = "Pure-Rust PDF page-primitive extraction and rendering: a thread-safe replacement for the pdfium surface used by rustypdf2markdown."
+description = "Pure-Rust PDF page-primitive extraction and rendering: a thread-safe replacement for the pdfium surface used by rustypdf."
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/pgarrett-scripps/rustium"
-homepage = "https://github.com/pgarrett-scripps/rustium"
+repository = "https://github.com/pgarrett-scripps/rustium-pdf"
+homepage = "https://github.com/pgarrett-scripps/rustium-pdf"
 documentation = "https://docs.rs/rustium-pdf"
 keywords = ["pdf", "parser", "text-extraction", "render", "fonts"]
 categories = ["parser-implementations", "text-processing", "rendering"]

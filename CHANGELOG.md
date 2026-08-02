@@ -40,5 +40,5 @@ First release.
   rendering. `DCTDecode` (JPEG) is handled.
 - Clipping is tracked as a bounding rectangle rather than an arbitrary path.
 
-[Unreleased]: https://github.com/pgarrett-scripps/rustium/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/pgarrett-scripps/rustium/releases/tag/v0.1.0
+[Unreleased]: https://github.com/pgarrett-scripps/rustium-pdf/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/pgarrett-scripps/rustium-pdf/releases/tag/v0.1.0
