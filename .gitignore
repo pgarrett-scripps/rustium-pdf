@@ -1,0 +1,10 @@
+# Build artifacts
+/target/
+
+# Backup and editor files
+**/*.rs.bk
+*.swp
+.DS_Store
+
+# Rendered output from the examples
+*.png
