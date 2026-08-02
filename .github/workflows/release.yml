@@ -1,0 +1,57 @@
+name: Release
+
+# Publishes the crate to crates.io from a tag.
+#
+# The tag is the trigger and the version is read from Cargo.toml, so the two
+# can disagree — and a release published under the wrong number cannot be
+# unpublished, only yanked. The first job compares them and stops.
+#
+# This crate goes out before rustypaper, which depends on it: cargo resolves
+# a path dependency locally and the registry cannot.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and verify everything, publish nothing"
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check the tag against the manifest
+        if: github.event_name == 'push'
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          tag="${GITHUB_REF#refs/tags/v}"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag v$tag does not match Cargo.toml version $version."\
+                 "A release cannot be unpublished, so this stops here."
+            exit 1
+          fi
+
+      - run: cargo test --all-targets
+      - run: cargo test --doc
+      - run: cargo publish --dry-run --locked
+
+      # Set CARGO_REGISTRY_TOKEN in repository secrets, from an API token on
+      # crates.io scoped to publish-update. crates.io also supports GitHub
+      # OIDC trusted publishing, which removes the long-lived secret; switch
+      # once the first release has gone out under a token.
+      - name: Publish
+        if: github.event_name == 'push' || inputs.dry_run == false
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
