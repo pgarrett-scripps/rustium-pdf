@@ -146,15 +146,14 @@ impl CMap {
                         }
                     }
                 }
-                "usecmap" => {
-                    // Only the identity parents matter in practice.
+                // Only the identity parents matter in practice.
+                "usecmap"
                     if op
                         .operands
                         .iter()
-                        .any(|o| o.as_name().is_some_and(|n| n.starts_with("Identity")))
-                    {
-                        map.identity_cid = true;
-                    }
+                        .any(|o| o.as_name().is_some_and(|n| n.starts_with("Identity"))) =>
+                {
+                    map.identity_cid = true;
                 }
                 _ => {}
             }
@@ -198,11 +197,10 @@ impl CMap {
         for (lo, hi, base) in &self.uni_ranges {
             if (*lo..=*hi).contains(&code) {
                 let mut units = base.clone();
-                if let Some(last) = units.last_mut() {
-                    *last = last.wrapping_add((code - lo) as u16);
-                } else {
-                    return None;
-                }
+                // An empty destination has no trailing unit to increment, so there is no
+                // mapping to build.
+                let last = units.last_mut()?;
+                *last = last.wrapping_add((code - lo) as u16);
                 return non_empty(String::from_utf16_lossy(&units));
             }
         }
