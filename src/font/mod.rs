@@ -14,6 +14,7 @@ pub mod encoding;
 pub mod glyph;
 mod metrics;
 pub mod system;
+mod type1;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -181,8 +182,22 @@ enum Program {
     Sfnt(Arc<[u8]>),
     /// A bare CFF program (`/FontFile3` with subtype `Type1C` or `CIDFontType0C`).
     Cff(Arc<[u8]>),
-    /// No program, or one in a format whose charstrings are not interpreted (Type1 `/FontFile`).
+    /// A Type1 program (`/FontFile`). Its charstrings are eexec-encrypted and are not
+    /// interpreted, so it yields no outlines — but its cleartext header carries the builtin
+    /// `/Encoding`, which for a symbolic font is the only record of what each code means.
+    Type1(Arc<[u8]>),
+    /// No embedded program at all.
     None,
+}
+
+impl Program {
+    /// The encoding the program declares for itself, where the format exposes one.
+    fn builtin_encoding(&self) -> Option<type1::Builtin> {
+        match self {
+            Program::Type1(data) => type1::builtin_encoding(data),
+            _ => None,
+        }
+    }
 }
 
 /// Advance widths, in the form the font type declares them.
@@ -233,6 +248,9 @@ pub struct Font {
     outline_cache: Mutex<HashMap<u32, Option<Arc<Outline>>>>,
     /// The substitute face, resolved on the first glyph that needs one.
     substitute: std::sync::OnceLock<Option<Arc<[u8]>>>,
+    /// CID to glyph id for a CID-keyed CFF program, inverted from its charset on first use.
+    /// Empty for a program that is not CID-keyed.
+    cff_cid_to_gid: std::sync::OnceLock<HashMap<u16, u16>>,
 }
 
 impl std::fmt::Debug for Font {
@@ -278,9 +296,11 @@ impl Font {
         let flags = derive_flags(doc, descriptor.as_ref(), &base_font);
         let symbolic = flags.is_symbolic();
 
-        let names = build_encoding(doc, dict, &base_font, symbolic);
-        let widths = simple_widths(doc, dict, descriptor.as_ref());
+        // The program is loaded first: a symbolic font that names no encoding falls back to the
+        // one the program declares for itself.
         let program = load_program(doc, descriptor.as_ref());
+        let names = build_encoding(doc, dict, &base_font, symbolic, &program);
+        let widths = simple_widths(doc, dict, descriptor.as_ref());
 
         Font {
             base_font,
@@ -296,6 +316,7 @@ impl Font {
             char_procs: Dict::new(),
             outline_cache: Mutex::new(HashMap::new()),
             substitute: std::sync::OnceLock::new(),
+            cff_cid_to_gid: std::sync::OnceLock::new(),
         }
     }
 
@@ -356,6 +377,7 @@ impl Font {
             char_procs: Dict::new(),
             outline_cache: Mutex::new(HashMap::new()),
             substitute: std::sync::OnceLock::new(),
+            cff_cid_to_gid: std::sync::OnceLock::new(),
         }
     }
 
@@ -381,7 +403,8 @@ impl Font {
             base_font,
             is_type3: true,
             font_matrix,
-            names: build_encoding(doc, dict, "", true),
+            // A Type3 font has no embedded program, so there is no builtin encoding to consult.
+            names: build_encoding(doc, dict, "", true, &Program::None),
             symbolic: true,
             composite: None,
             to_unicode: load_to_unicode(doc, dict),
@@ -393,6 +416,7 @@ impl Font {
                 .unwrap_or_default(),
             outline_cache: Mutex::new(HashMap::new()),
             substitute: std::sync::OnceLock::new(),
+            cff_cid_to_gid: std::sync::OnceLock::new(),
         }
     }
 
@@ -532,7 +556,10 @@ impl Font {
         let mut sink = Sink::default();
         face.outline_glyph(gid, &mut sink)?;
         let upem = f32::from(face.units_per_em()).max(1.0);
-        Some(sink.finish(1000.0 / upem, item.width))
+        Some(Outline {
+            is_substitute: true,
+            ..sink.finish(1000.0 / upem, item.width)
+        })
     }
 
     fn embedded_outline(&self, item: &CodeItem) -> Option<Outline> {
@@ -556,7 +583,7 @@ impl Font {
                 let scale = table.matrix().sx * 1000.0;
                 Some(sink.finish(if scale.abs() < 1e-6 { 1.0 } else { scale }, item.width))
             }
-            Program::None => None,
+            Program::Type1(_) | Program::None => None,
         }
     }
 
@@ -604,6 +631,15 @@ impl Font {
         item: &CodeItem,
     ) -> Option<ttf_parser::GlyphId> {
         if self.composite.is_some() {
+            // A CID-keyed CFF records its own CID for each glyph in its charset, and the
+            // identity `/CIDToGIDMap` describes does not apply to it — that entry is a
+            // CIDFontType2 mechanism. Taking the CID as a glyph id draws whichever glyph
+            // happens to sit at that index. The text still comes out right, because text comes
+            // from the encoding, so the only symptom is that every reported glyph box is some
+            // other letter's — which is enough to make a heading look like it has a space in it.
+            if let Some(gid) = self.cff_cid_to_gid(table, item.cid) {
+                return Some(ttf_parser::GlyphId(gid));
+            }
             return Some(ttf_parser::GlyphId(self.composite_gid(item.cid)));
         }
         let name = self.glyph_name(item.code);
@@ -618,6 +654,24 @@ impl Font {
             }
         }
         Some(ttf_parser::GlyphId(item.cid as u16))
+    }
+
+    /// Inverts a CID-keyed CFF's charset to map a CID to its glyph id.
+    ///
+    /// The charset only runs glyph id to CID, so the whole table is walked once and cached.
+    /// `None` when the program is not CID-keyed, which is also what leaves the map empty.
+    fn cff_cid_to_gid(&self, table: &ttf_parser::cff::Table, cid: u32) -> Option<u16> {
+        let map = self.cff_cid_to_gid.get_or_init(|| {
+            let mut map = HashMap::new();
+            for gid in 0..table.number_of_glyphs() {
+                if let Some(cid) = table.glyph_cid(ttf_parser::GlyphId(gid)) {
+                    // A duplicated CID is malformed; the first glyph claiming it wins.
+                    map.entry(cid).or_insert(gid);
+                }
+            }
+            map
+        });
+        map.get(&u16::try_from(cid).ok()?).copied()
     }
 
     /// A composite font's CID to glyph id, through `/CIDToGIDMap` when one is present.
@@ -686,7 +740,11 @@ impl Sink {
                 scale_cmd(cmd, scale);
             }
         }
-        Outline { cmds, advance }
+        Outline {
+            cmds,
+            advance,
+            is_substitute: false,
+        }
     }
 }
 
@@ -753,8 +811,9 @@ fn load_program(doc: &Document, descriptor: Option<&Dict>) -> Program {
     let Some(desc) = descriptor else {
         return Program::None;
     };
-    // `/FontFile` is Type1, whose eexec-encrypted charstrings are not interpreted here; its
-    // metrics still come from `/Widths`, so text extraction is unaffected.
+    // `/FontFile` is Type1, whose eexec-encrypted charstrings are not interpreted here, so it
+    // yields no outlines; its metrics come from `/Widths` and its encoding from its cleartext
+    // header, so both text extraction and layout are unaffected.
     for key in ["FontFile2", "FontFile3", "FontFile"] {
         let Some(obj) = doc.dict_get(desc, key) else {
             continue;
@@ -774,14 +833,29 @@ fn load_program(doc: &Document, descriptor: Option<&Dict>) -> Program {
                 Some("OpenType") => Program::Sfnt(data),
                 _ => Program::Cff(data),
             },
-            _ => Program::None,
+            _ => Program::Type1(data),
         };
     }
     Program::None
 }
 
 /// Builds the 256-entry code to glyph-name table for a simple or Type3 font.
-fn build_encoding(doc: &Document, dict: &Dict, base_font: &str, symbolic: bool) -> Vec<String> {
+///
+/// The base table is chosen in the order the specification lays down: the encoding the font
+/// dictionary names, else the one the embedded program declares for itself, else a default
+/// inferred from the font. `/Differences` is layered over whichever wins.
+///
+/// The middle step is not optional. A symbolic font may omit `/Encoding` altogether, and TeX's
+/// Computer Modern does — `/Flags 4`, no `/Encoding`, no `/ToUnicode`. Skipping to the default
+/// then leaves every slot empty, and an entire paper extracts as blank text while its glyphs sit
+/// in exactly the right places.
+fn build_encoding(
+    doc: &Document,
+    dict: &Dict,
+    base_font: &str,
+    symbolic: bool,
+    program: &Program,
+) -> Vec<String> {
     let encoding_obj = doc.dict_get(dict, "Encoding");
 
     let named = |n: &str| match n {
@@ -800,7 +874,22 @@ fn build_encoding(doc: &Document, dict: &Dict, base_font: &str, symbolic: bool) 
             .and_then(named),
         None => None,
     };
+
+    // What the program says about itself, consulted only where the dictionary stayed silent.
+    let mut names = vec![String::new(); 256];
+    let mut from_program = false;
     if base.is_none() {
+        match program.builtin_encoding() {
+            Some(type1::Builtin::Standard) => base = Some(Encoding::Standard),
+            Some(type1::Builtin::Custom(builtin)) => {
+                names = builtin;
+                from_program = true;
+            }
+            None => {}
+        }
+    }
+
+    if base.is_none() && !from_program {
         let lower = base_font.to_ascii_lowercase();
         if lower.contains("symbol") {
             base = Some(Encoding::Symbol);
@@ -810,7 +899,6 @@ fn build_encoding(doc: &Document, dict: &Dict, base_font: &str, symbolic: bool) 
         }
     }
 
-    let mut names = vec![String::new(); 256];
     if let Some(enc) = base {
         for (code, slot) in names.iter_mut().enumerate() {
             *slot = base_encoding_name(enc, code as u8).to_string();

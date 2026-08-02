@@ -15,6 +15,11 @@ pub enum PathCmd {
 pub struct Outline {
     pub cmds: Vec<PathCmd>,
     pub advance: f32,
+    /// True when the shape came from a substitute system face rather than the document's own
+    /// program. The letters are then somebody else's: their ink extents are not this font's, so
+    /// a caller measuring geometry must not read them as the document's, however good they look
+    /// when drawn. Rendering is the one consumer that should ignore this.
+    pub is_substitute: bool,
 }
 
 impl Outline {

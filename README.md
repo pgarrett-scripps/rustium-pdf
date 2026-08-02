@@ -49,7 +49,7 @@ cargo run --example render -- file.pdf [page] [dpi] [out.png] # rasterise
 | Encryption | RC4 and AES, standard security handler |
 | Filters | Flate, LZW, ASCIIHex, ASCII85, RunLength, with PNG/TIFF predictors |
 | Content | Full graphics and text state machine, form XObjects, inline images, Type3 glyph procedures |
-| Fonts | Simple, Type0/CID and Type3; encodings with `/Differences`; `/ToUnicode`; CID `/W` arrays; built-in metrics for the standard 14 |
+| Fonts | Simple, Type0/CID and Type3; encodings with `/Differences`; `/ToUnicode`; the builtin `/Encoding` of an embedded Type1 program; CID `/W` arrays; built-in metrics for the standard 14 |
 | Outlines | TrueType, OpenType and bare CFF via `ttf-parser` |
 | Rendering | tiny-skia rasteriser honouring content-stream paint order, with region cropping and PNG output |
 
@@ -69,9 +69,22 @@ preferring the metrically compatible Liberation family, then DejaVu, then Noto. 
 Positions and advances always come from the document, never the substitute, so a missing font
 shifts nothing — it only draws letters slightly wide or narrow inside slots the PDF chose.
 
+## Symbolic fonts that name no encoding
+
+A simple font marked symbolic may omit `/Encoding` entirely, and TeX's Computer Modern does —
+`/Flags 4`, no `/Encoding`, no `/ToUnicode`. Its embedded Type1 program is then the only record
+of what each code means, so the builtin `/Encoding` array is read out of the program's cleartext
+header, ahead of `eexec`. Skipping that step is not a partial loss: every glyph on such a page
+lands in exactly the right place carrying no text at all.
+
 ## Known gaps
 
-- Type1 `/FontFile` programs yield metrics and text but no outlines; CFF and TrueType do.
+- Type1 `/FontFile` programs yield metrics, encodings and text, but no outlines — their
+  charstrings are eexec-encrypted and are not interpreted. CFF and TrueType do yield outlines.
+- A bare CFF program's own builtin encoding is not read; its `/Encoding` or `/ToUnicode` is.
+- A glyph drawn from a substitute face reports the document's advance as its horizontal extent
+  rather than the substitute's ink, since that ink is another typeface's. Vertical extents are
+  the substitute's.
 - Predefined non-Identity CJK CMaps fall back to the identity mapping.
 - `JPXDecode`, `CCITTFaxDecode` and `JBIG2Decode` images are passed through undecoded and skipped
   when rendering. `DCTDecode` (JPEG) and all byte-level filters are handled.
@@ -80,8 +93,14 @@ shifts nothing — it only draws letters slightly wide or narrow inside slots th
 
 ## Status
 
-67 tests. Verified against real-world documents at 100% glyph-outline resolution and roughly
+76 tests. Verified against real-world documents at 100% glyph-outline resolution and roughly
 17 ms/page rendering at 110 dpi.
+
+Measured as the backend for `rustypdf2markdown` across its ten-paper corpus, against the same
+pipeline running on pdfium: prose bigram recall **0.891** (pdfium 0.894), equation recall
+**0.375** (pdfium 0.375), equation fidelity **0.549** (pdfium 0.557). That corpus passes all 31
+of its integration tests on either backend, and rustium converts it in 2.06 s against pdfium's
+1.94 s while holding 63 MB of resident memory against pdfium's 95 MB.
 
 ## License
 

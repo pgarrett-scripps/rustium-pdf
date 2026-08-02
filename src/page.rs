@@ -20,7 +20,7 @@ use crate::object::{Dict, ObjRef, Object};
 /// Nesting limit for form XObjects and Type3 glyph procedures.
 const MAX_DEPTH: usize = 12;
 /// A horizontal gap this many ems wide, on an unchanged baseline, reads as a word break.
-const SPACE_GAP_EM: f32 = 0.20;
+const SPACE_GAP_EM: f32 = 0.12;
 /// Baselines within this fraction of an em count as the same line for gap detection.
 const BASELINE_EPSILON_EM: f32 = 0.10;
 
@@ -261,11 +261,48 @@ impl Page {
     /// that need reading order sort [`Page::glyphs`] by geometry themselves.
     pub fn text(&self) -> String {
         let mut out = String::new();
+        let mut prev: Option<&Glyph> = None;
         for g in &self.glyphs {
+            // A content stream carries no line breaks: a new line is just a glyph placed at a
+            // different baseline. Concatenating blindly fuses the last word of one line onto
+            // the first of the next — "of" + "the" becomes "ofthe" — which silently destroys
+            // the commonest words in the document.
+            if let Some(p) = prev {
+                if starts_new_line(p, g) {
+                    out.push('\n');
+                }
+            }
             out.push_str(&g.text);
+            if !g.text.is_empty() {
+                prev = Some(g);
+            }
         }
         out
     }
+}
+
+/// Whether `g` begins a new line relative to the glyph before it.
+///
+/// Judged geometrically rather than from the operators, because `Td`, `TD`, `T*`, `Tm` and a
+/// fresh `BT` can all start a line, and plenty of producers use `Tm` for every single line.
+fn starts_new_line(prev: &Glyph, g: &Glyph) -> bool {
+    let size = prev.font_size.max(g.font_size);
+    if size <= 0.0 {
+        return false;
+    }
+    // Rotated runs are compared along their own baseline direction, so a rotated column does
+    // not read as one break per glyph.
+    if (prev.rotation - g.rotation).abs() > 0.01 {
+        return true;
+    }
+    let (dx, dy) = (g.origin.x - prev.origin.x, g.origin.y - prev.origin.y);
+    let (cos, sin) = (prev.rotation.cos(), prev.rotation.sin());
+    let along = dx * cos + dy * sin;
+    let across = -dx * sin + dy * cos;
+
+    // A baseline shift of a third of an em is a new line; so is any backward jump larger than
+    // one em, which is how a wrapped line returns to the left margin.
+    across.abs() > size * 0.33 || along < -size
 }
 
 // ---- interpreter ----------------------------------------------------------------------------
@@ -694,7 +731,10 @@ impl<'a> Interpreter<'a> {
                 })
                 * gs.horizontal_scale;
 
-            self.emit_glyph(&font, &item, &trm, gs, advance_text);
+            // The advance is a text-space vector, so it reaches user space through Tm and the
+            // CTM — but not through `param`, which would apply the font size a second time.
+            let text_to_user = text.matrix.concat(&gs.ctm);
+            self.emit_glyph(&font, &item, &trm, &text_to_user, gs, advance_text);
 
             if font.is_type3 {
                 self.draw_type3_glyph(&font, &item, &trm, gs, resources, depth);
@@ -703,11 +743,13 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_glyph(
         &mut self,
         font: &Font,
         item: &CodeItem,
         trm: &Matrix,
+        text_to_user: &Matrix,
         gs: &State,
         advance_text: f32,
     ) {
@@ -725,7 +767,10 @@ impl<'a> Interpreter<'a> {
         // The rendering matrix already folds in `/Tf` size, `Tm` and the CTM, so its vertical
         // scale is the size the glyph actually appears at.
         let effective_size = trm.y_scale();
-        let advance_user = advance_text * gs.ctm.x_scale();
+        // Transforming the advance as a vector keeps rotated and skewed text correct, and is
+        // exactly the displacement the interpreter applies to the text matrix after this glyph.
+        let (advance_dx, advance_dy) = text_to_user.apply_vector(advance_text, 0.0);
+        let advance_user = advance_dx.hypot(advance_dy);
 
         // A gap on an unchanged baseline is a word break the string itself does not contain.
         if !text.is_empty() {
@@ -791,9 +836,8 @@ impl<'a> Interpreter<'a> {
             glyph_matrix,
         });
 
-        let end = trm.apply(Point::new(item.width / 1000.0, 0.0));
         self.trail = Some(PenTrail {
-            end: Point::new(origin.x + advance_user, end.y),
+            end: Point::new(origin.x + advance_dx, origin.y + advance_dy),
             baseline_y: origin.y,
             size: effective_size,
         });
@@ -801,6 +845,14 @@ impl<'a> Interpreter<'a> {
 
     /// A glyph's box: tight around the outline when the font program yields one, otherwise a
     /// nominal em box from the advance, which is what a metrics-only font can support.
+    ///
+    /// A substituted outline is deliberately not trusted horizontally. Its letters are another
+    /// typeface's, so their ink widths are not this font's — and horizontally the document has
+    /// already given the exact answer in the advance. Taking the substitute's widths made the
+    /// gap between two glyphs depend on which fonts happen to be installed, which is what turned
+    /// a letterspaced `REFERENCES` into `REFEREN CES`. Vertically the substitute is kept: cap
+    /// height, x-height and descender depth carry across text faces well enough to be worth far
+    /// more than one nominal height applied to every glyph alike.
     fn glyph_bbox(&self, font: &Font, item: &CodeItem, trm: &Matrix) -> (Rect, Matrix) {
         // Type3 glyph space is arbitrary, so the font matrix rather than /1000 applies.
         let to_text = if font.is_type3 {
@@ -809,13 +861,23 @@ impl<'a> Interpreter<'a> {
             Matrix::scale(0.001, 0.001)
         };
         let m = to_text.concat(trm);
+        let advance = item.width.max(1.0);
         if let Some(outline) = font.outline(item) {
             if let Some(b) = outline.bbox() {
+                let b = if outline.is_substitute {
+                    Rect {
+                        x0: 0.0,
+                        x1: advance,
+                        ..b
+                    }
+                } else {
+                    b
+                };
                 return (m.apply_rect(&b), m);
             }
         }
         // Nominal box: baseline to ascender, descender below, spanning the advance.
-        let nominal = Rect::from_corners(0.0, -200.0, item.width.max(1.0), 800.0);
+        let nominal = Rect::from_corners(0.0, -200.0, advance, 800.0);
         (m.apply_rect(&nominal), m)
     }
 
@@ -1334,6 +1396,56 @@ pub(crate) mod tests {
         assert_eq!(doc.page(0).unwrap().text(), "AB");
     }
 
+    /// Justified text squeezes its word spaces, and they still have to register as spaces.
+    ///
+    /// A real line of ICLR body text was found setting them at 0.19 em — under the 0.20 em the
+    /// threshold started at, so *every* word gap on that line was missed and the line extracted
+    /// as one run-on word. The threshold has to sit below what justification compresses a space
+    /// to, and above what kerning ever opens up.
+    #[test]
+    fn a_compressed_word_space_is_still_a_word_space() {
+        let doc = doc_with("BT /F1 12 Tf 72 720 Td [(A) -190 (B)] TJ ET");
+        assert_eq!(
+            doc.page(0).unwrap().text(),
+            "A B",
+            "0.19 em is a squeezed space"
+        );
+
+        // Well below any space, and comfortably above ordinary kerning: still one word.
+        let doc = doc_with("BT /F1 12 Tf 72 720 Td [(A) -80 (B)] TJ ET");
+        assert_eq!(doc.page(0).unwrap().text(), "AB", "0.08 em is not a space");
+    }
+
+    /// A glyph drawn from a substitute face must report the document's advance, not the
+    /// substitute's ink width.
+    ///
+    /// Helvetica is one of the standard 14 and embeds nothing, so its outlines come from
+    /// whatever system face is installed. Letting that face's ink decide the box made the gap
+    /// between two glyphs depend on which fonts the machine happened to have, and a letterspaced
+    /// heading then picked up a word break that is not in the document (`REFEREN CES`).
+    #[test]
+    fn a_substituted_glyph_reports_the_documents_advance() {
+        let doc = doc_with("BT /F1 12 Tf 72 720 Td (Hi) Tj ET");
+        let page = doc.page(0).unwrap();
+
+        for glyph in &page.glyphs {
+            let width = glyph.bbox.x1 - glyph.bbox.x0;
+            assert!(
+                (width - glyph.advance).abs() < 0.01,
+                "{:?}: box {width} should span the advance {}",
+                glyph.text,
+                glyph.advance
+            );
+        }
+
+        // Consecutive boxes therefore abut exactly, leaving no gap to mistake for a space.
+        let gap = page.glyphs[1].bbox.x0 - page.glyphs[0].bbox.x1;
+        assert!(
+            gap.abs() < 0.01,
+            "adjacent letters must not show an ink gap"
+        );
+    }
+
     #[test]
     fn text_state_operators_apply() {
         // Tz halves the advance; the second glyph must land half as far along.
@@ -1346,6 +1458,54 @@ pub(crate) mod tests {
         let page = doc.page(0).unwrap();
         let b = page.glyphs.iter().find(|g| g.text == "B").unwrap();
         assert!((b.origin.y - 706.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_scaled_text_matrix_does_not_manufacture_spaces() {
+        // `Tm` carries its own scale, so the pen advance must travel through Tm as well as the
+        // CTM. Scaling by the CTM alone under-counts it, and the shortfall reads as a gap wide
+        // enough to be a word break — a space between every single character.
+        let doc = doc_with("BT /F1 12 Tf 2 0 0 2 72 720 Tm (Hi) Tj ET");
+        let page = doc.page(0).unwrap();
+        assert_eq!(page.text(), "Hi");
+        assert!(!page.glyphs.iter().any(|g| g.is_generated_space));
+        // Helvetica's H advances 722/1000 em, doubled by the text matrix.
+        assert!((page.glyphs[1].origin.x - (72.0 + 0.722 * 12.0 * 2.0)).abs() < 0.05);
+    }
+
+    #[test]
+    fn an_oversized_advance_does_not_swallow_word_breaks() {
+        // The mirror of the case above: over-counting the advance pushes the pen past the next
+        // glyph, every gap computes as negative, and no word break is ever emitted.
+        let doc = doc_with("BT /F1 12 Tf 0.5 0 0 0.5 72 720 Tm (a) Tj 40 0 Td (b) Tj ET");
+        let page = doc.page(0).unwrap();
+        assert!(
+            page.glyphs.iter().any(|g| g.is_generated_space),
+            "a 20pt gap at 6pt effective size is a word break: {:?}",
+            page.text()
+        );
+    }
+
+    #[test]
+    fn text_breaks_lines_instead_of_fusing_words() {
+        // Content streams have no newlines; a new line is a glyph at another baseline. Without
+        // a break the last word of one line fuses onto the first of the next.
+        let doc = doc_with("BT /F1 12 Tf 72 720 Td (of) Tj 0 -14 Td (the) Tj ET");
+        assert_eq!(doc.page(0).unwrap().text(), "of\nthe");
+    }
+
+    #[test]
+    fn a_wrapped_line_returning_to_the_margin_breaks() {
+        // Some producers set an explicit `Tm` per line rather than using `Td`/`T*`.
+        let doc =
+            doc_with("BT /F1 12 Tf 1 0 0 1 300 720 Tm (end) Tj 1 0 0 1 72 720 Tm (start) Tj ET");
+        assert_eq!(doc.page(0).unwrap().text(), "end\nstart");
+    }
+
+    #[test]
+    fn ordinary_spacing_within_a_line_is_not_a_break() {
+        let doc = doc_with("BT /F1 12 Tf 72 720 Td (a) Tj (b) Tj ET");
+        assert_eq!(doc.page(0).unwrap().text(), "ab");
     }
 
     #[test]

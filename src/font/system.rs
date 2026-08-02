@@ -142,6 +142,13 @@ fn collect(dir: &std::path::Path, depth: usize, out: &mut Vec<(String, PathBuf)>
 ///
 /// Results are cached per style, so a document using four faces reads at most four files no
 /// matter how many pages or glyphs it has.
+///
+/// The lock is held across the file read rather than dropped and retaken around it. Releasing it
+/// would let two threads miss on the same style at once, each read the file, and each cache and
+/// return a *different* `Arc` for the same face — so the same style would be backed by two
+/// copies of a multi-megabyte font, and identity comparisons on the result would be
+/// non-deterministic. The read happens at most once per style per process, so serialising it
+/// costs nothing worth having.
 pub fn substitute(style: Style) -> Option<Arc<[u8]>> {
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -151,7 +158,8 @@ pub fn substitute(style: Style) -> Option<Arc<[u8]>> {
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let key = (style.serif, style.fixed_pitch, style.bold, style.italic);
 
-    if let Some(hit) = cache.lock().unwrap().get(&key) {
+    let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(hit) = cache.get(&key) {
         return hit.clone();
     }
 
@@ -169,7 +177,7 @@ pub fn substitute(style: Style) -> Option<Arc<[u8]>> {
         }
     }
 
-    cache.lock().unwrap().insert(key, found.clone());
+    cache.insert(key, found.clone());
     found
 }
 
