@@ -120,12 +120,12 @@ holds that harness, and says what it does and does not tell you.
 
 How well those characters then *convert* to Markdown is a separate question, belonging to the
 consumer rather than to a parser. Measured as the backend for `rustypdf2markdown` across its
-ten-paper corpus, against the same pipeline running on pdfium: prose bigram recall **0.891**
-(pdfium 0.894), equation recall **0.375** (pdfium 0.375), equation fidelity **0.549** (pdfium
+ten-paper corpus, against that project's recorded pdfium baseline: prose bigram recall **0.891**
+(pdfium 0.894), equation recall **0.370** (pdfium 0.375), equation fidelity **0.547** (pdfium
 0.557). That corpus passes all 31 of its integration tests on either backend, and rustium
 converts it in 2.06 s against pdfium's 1.94 s while holding 63 MB of resident memory against
 pdfium's 95 MB. Those figures are quoted only to show this crate is not the limiting factor:
-equation recall matching pdfium to within 0.001 places that ceiling in the consumer's equation
+equation recall landing within 0.005 of pdfium places that ceiling in the consumer's equation
 detection, not in either engine's extraction.
 
 ## License
