@@ -24,8 +24,7 @@ enum XrefEntry {
 
 /// The parsed file: bytes plus the object map. All access is by object number.
 ///
-/// Interior caches are mutex-guarded, so `&PdfFile` is usable from multiple threads — the
-/// property pdfium never had.
+/// Interior caches are mutex-guarded, so `&PdfFile` is usable from multiple threads.
 pub struct PdfFile {
     data: Vec<u8>,
     xref: HashMap<u32, XrefEntry>,

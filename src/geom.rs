@@ -81,9 +81,9 @@ impl Rect {
 
 /// An affine transform `[a b c d e f]`, applied to row vectors: `(x, y, 1) · M`.
 ///
-/// This is the convention the PDF specification uses for the CTM and text matrices, and the
-/// convention pdfium-render exposes, so composition reads the same way in both: transforming by
-/// `A` then `B` is `A.concat(B)`.
+/// This is the convention the PDF specification uses for the CTM and text matrices, so
+/// composition reads the same way here as in the spec: transforming by `A` then `B` is
+/// `A.concat(B)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Matrix {
     pub a: f32,

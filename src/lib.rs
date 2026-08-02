@@ -3,9 +3,7 @@
 //! Pure-Rust extraction of PDF page primitives — glyphs with geometry, vector paths, images —
 //! plus page rendering. No C library, no FFI, no global state.
 //!
-//! This is the default PDF backend of [rustypaper], where it took over the slice of pdfium that
-//! project used to require. Observable semantics match pdfium's where downstream code depends on
-//! them: generated space glyphs, soft-hyphen stripping, y-down page space helpers.
+//! It is what [rustypaper] reads PDFs with.
 //!
 //! [rustypaper]: https://github.com/pgarrett-scripps/rustypaper
 //!
@@ -28,8 +26,14 @@
 //! ## Threading
 //!
 //! [`Document`] is `Send + Sync` with no global state, so pages can be extracted and rendered
-//! concurrently from one open document — the property pdfium's process-wide, single-threaded
-//! design cannot offer.
+//! concurrently from one open document, without a lock around it.
+//!
+//! ## Text semantics
+//!
+//! A word break the page expresses as a positioning gap rather than a space character is emitted
+//! as a glyph flagged [`Glyph::is_generated_space`], so word boundaries survive.
+//! [`Page::text`] drops soft hyphens, which mark optional break points rather than content.
+//! Primitives are in user space (y-up); [`Page::page_matrix`] converts to y-down page space.
 //!
 //! ## Fonts without embedded programs
 //!

@@ -47,7 +47,7 @@ pub struct Glyph {
     /// Baseline rotation in radians, counter-clockwise from the positive x-axis.
     pub rotation: f32,
     /// True when this glyph was synthesized from a positioning gap rather than read from a
-    /// string, matching the word breaks pdfium reports.
+    /// string, so that a word break the page draws as a gap is still a space in the output.
     pub is_generated_space: bool,
     /// The text rendering mode in force (`/Tr`). Mode 3 and 7 are invisible.
     pub render_mode: i32,
@@ -1689,9 +1689,8 @@ pub(crate) mod tests {
 
 #[cfg(test)]
 mod thread_safety {
-    /// The crate's premise is that a document is usable from several threads at once, which
-    /// pdfium's global state prevents. Assert it at compile time so a stray `Rc` or `Cell`
-    /// cannot silently take it away.
+    /// The crate's premise is that a document is usable from several threads at once. Assert it
+    /// at compile time so a stray `Rc` or `Cell` cannot silently take it away.
     const _: fn() = || {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<crate::Document>();

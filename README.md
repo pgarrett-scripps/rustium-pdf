@@ -5,11 +5,7 @@ page rendering.
 
 No C library, no FFI, no global state.
 
-This is the default PDF backend of
-[`rustypaper`](https://github.com/pgarrett-scripps/rustypaper), where it took over the slice of
-[pdfium](https://pdfium.googlesource.com/pdfium/) that project used to require; pdfium remains
-there as an opt-in feature. Observable semantics match pdfium's where downstream code depends on
-them: generated space glyphs, soft-hyphen stripping, and y-down page-space helpers.
+It is what [`rustypaper`](https://github.com/pgarrett-scripps/rustypaper) reads PDFs with.
 
 ## Install
 
@@ -65,9 +61,15 @@ cargo run --example fonts  -- file.pdf                        # per-font unmappe
 ## Threading
 
 `Document` is `Send + Sync` with no global state, so pages can be extracted and rendered
-concurrently from a single open document — the property pdfium's process-wide, single-threaded
-design cannot offer. A compile-time assertion in the test build keeps it that way, so a stray
-`Rc` or `Cell` cannot take it away unnoticed.
+concurrently from a single open document, without a lock around it. A compile-time assertion in
+the test build keeps it that way, so a stray `Rc` or `Cell` cannot take it away unnoticed.
+
+## Text semantics
+
+A word break the page expresses as a positioning gap rather than a space character is emitted as
+a glyph flagged `is_generated_space`, so word boundaries survive. `Page::text` drops soft
+hyphens, which mark optional break points rather than content. Primitives are in user space
+(y-up); `Page::page_matrix` converts to y-down page space.
 
 ## Fonts without embedded programs
 
@@ -129,14 +131,7 @@ word-set Jaccard **0.960** on the arXiv set, **0.995** and **0.992** on bioRxiv.
 holds that harness, and says what it does and does not tell you.
 
 How well those characters then *convert* to Markdown is a separate question, belonging to the
-consumer rather than to a parser. Measured as the backend for `rustypaper` across its
-ten-paper corpus, against that project's recorded pdfium baseline: prose bigram recall **0.891**
-(pdfium 0.894), equation recall **0.370** (pdfium 0.375), equation fidelity **0.547** (pdfium
-0.557). That corpus passes all 31 of its integration tests on either backend, and rustium-pdf
-converts it in 2.06 s against pdfium's 1.94 s while holding 63 MB of resident memory against
-pdfium's 95 MB. Those figures are quoted only to show this crate is not the limiting factor:
-equation recall landing within 0.005 of pdfium places that ceiling in the consumer's equation
-detection, not in either engine's extraction.
+consumer rather than to a parser, and is measured there.
 
 ## License
 
