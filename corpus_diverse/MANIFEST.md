@@ -26,3 +26,19 @@ applies; they are test fixtures, not redistributed content.
 
 Nothing here is scanned, image-only, encrypted, right-to-left, CJK, or a slide deck. Those are
 the next axes to cover.
+
+## Checking a build against these
+
+```sh
+./fetch.sh                                             # download the set
+cargo build --release --example text
+python3 agree.py ../target/release/examples/text *.pdf # needs poppler's pdftotext
+```
+
+`agree.py` reports word-bigram recall and word-set Jaccard against `pdftotext -raw`. It is a
+disagreement detector, not a correctness oracle: two independently written extractors that
+agree closely on a document are very likely both right, and a document where they diverge is
+worth looking at by hand. That works on any file, including one a user uploaded, which is
+exactly where no ground truth exists.
+
+Current: mean bigram **0.973**, Jaccard **0.961** over these eight plus the ten arXiv papers.
