@@ -2,7 +2,7 @@
 
 Pure-Rust extraction of PDF page primitives — glyphs with geometry, vector paths, images — plus
 page rendering. A thread-safe replacement for the slice of [pdfium](https://pdfium.googlesource.com/pdfium/)
-that [`rustypdf`](https://github.com/pgarrett-scripps/rustypdf) uses, with the
+that [`rustypaper`](https://github.com/pgarrett-scripps/rustypaper) uses, with the
 same observable semantics where downstream code depends on them: generated space glyphs,
 soft-hyphen stripping, and y-down page-space helpers.
 
@@ -119,7 +119,7 @@ word-set Jaccard **0.960** on the arXiv set, **0.995** and **0.992** on bioRxiv.
 holds that harness, and says what it does and does not tell you.
 
 How well those characters then *convert* to Markdown is a separate question, belonging to the
-consumer rather than to a parser. Measured as the backend for `rustypdf` across its
+consumer rather than to a parser. Measured as the backend for `rustypaper` across its
 ten-paper corpus, against that project's recorded pdfium baseline: prose bigram recall **0.891**
 (pdfium 0.894), equation recall **0.370** (pdfium 0.375), equation fidelity **0.547** (pdfium
 0.557). That corpus passes all 31 of its integration tests on either backend, and rustium

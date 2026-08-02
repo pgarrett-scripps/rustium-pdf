@@ -6,7 +6,7 @@ This checks **parsing**: given a PDF, does this crate recover the right characte
 order, with the right geometry. That is this crate's whole job, so it is tested here.
 
 It does **not** check conversion quality — reading order across columns, block classification,
-equation reconstruction, table structure. Those belong to `rustypdf` and are measured by
+equation reconstruction, table structure. Those belong to `rustypaper` and are measured by
 its own harness in `eval/`, against LaTeX source. Do not add conversion metrics here: a parser
 that scores itself on how good the Markdown looks is measuring somebody else's work, and will be
 tuned by the wrong signal.
@@ -17,11 +17,11 @@ The line is worth stating precisely, because it is easy to blur:
 | --- | --- | --- |
 | Did we read the right characters off the page? | this crate | `agree.py`, here |
 | Did we put them in the right place? | this crate | `agree.py`, here |
-| Is the resulting Markdown any good? | `rustypdf` | its `eval/`, not here |
+| Is the resulting Markdown any good? | `rustypaper` | its `eval/`, not here |
 
 ## Why these files
 
-The arXiv corpus in `rustypdf/corpus` is ten papers and **all ten are pdfTeX**. A
+The arXiv corpus in `rustypaper/corpus` is ten papers and **all ten are pdfTeX**. A
 producer monoculture hides producer-specific bugs: two word-segmentation defects survived that
 corpus and were found within minutes by the files below.
 

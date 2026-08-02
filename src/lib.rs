@@ -2,7 +2,7 @@
 //!
 //! Pure-Rust extraction of PDF page primitives — glyphs with geometry, vector paths, images —
 //! plus page rendering. A thread-safe replacement for the slice of pdfium that
-//! `rustypdf` uses, with the same observable semantics where downstream code depends
+//! `rustypaper` uses, with the same observable semantics where downstream code depends
 //! on them (generated space glyphs, soft-hyphen stripping, y-down page space helpers).
 //!
 //! ```no_run

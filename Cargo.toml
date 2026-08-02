@@ -1,6 +1,6 @@
 [package]
 name = "rustium-pdf"
-description = "Pure-Rust PDF page-primitive extraction and rendering: a thread-safe replacement for the pdfium surface used by rustypdf."
+description = "Pure-Rust PDF page-primitive extraction and rendering: a thread-safe replacement for the pdfium surface used by rustypaper."
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
