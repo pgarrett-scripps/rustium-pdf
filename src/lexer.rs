@@ -6,6 +6,13 @@
 
 use crate::object::{Dict, ObjRef, Object, Stream};
 
+/// How deep arrays and dictionaries may nest before the reader gives up.
+///
+/// Nesting is parsed recursively, so this is a stack budget as much as a grammar limit: a file
+/// with a hundred thousand `[` bytes would otherwise overflow the stack and abort the process.
+/// Real documents nest a handful of levels; 150 is far past anything a producer writes.
+const MAX_DEPTH: usize = 150;
+
 pub fn is_whitespace(b: u8) -> bool {
     matches!(b, b'\0' | b'\t' | b'\n' | b'\x0c' | b'\r' | b' ')
 }
@@ -223,101 +230,121 @@ impl<'a> Cursor<'a> {
     ///
     /// Indirect references (`n g R`) are recognised here with backtracking, so callers see a
     /// single [`Object::Ref`].
+    ///
+    /// Nesting past [`MAX_DEPTH`] also returns `None`, so a pathological file cannot exhaust the
+    /// stack.
     pub fn read_object(&mut self) -> Option<Object> {
-        self.skip_ws();
-        let b = self.peek()?;
-        match b {
-            b'/' => {
-                self.pos += 1;
-                Some(Object::Name(self.read_name()))
-            }
-            b'(' => {
-                self.pos += 1;
-                Some(Object::String(self.read_literal_string()))
-            }
-            b'<' => {
-                if self.data.get(self.pos + 1) == Some(&b'<') {
-                    self.pos += 2;
-                    self.read_dict_body()
-                } else {
+        self.read_object_at(0)
+    }
+
+    /// [`read_object`](Self::read_object) with the current nesting depth carried through.
+    ///
+    /// Only container arms recurse; braces and stray delimiters are skipped in a loop so that a
+    /// long run of junk bytes costs no stack at all.
+    fn read_object_at(&mut self, depth: usize) -> Option<Object> {
+        if depth >= MAX_DEPTH {
+            return None;
+        }
+        loop {
+            self.skip_ws();
+            let b = self.peek()?;
+            return match b {
+                b'/' => {
                     self.pos += 1;
-                    Some(Object::String(self.read_hex_string()))
+                    Some(Object::Name(self.read_name()))
                 }
-            }
-            b'[' => {
-                self.pos += 1;
-                let mut items = Vec::new();
-                loop {
-                    self.skip_ws();
-                    if self.peek() == Some(b']') {
+                b'(' => {
+                    self.pos += 1;
+                    Some(Object::String(self.read_literal_string()))
+                }
+                b'<' => {
+                    if self.data.get(self.pos + 1) == Some(&b'<') {
+                        self.pos += 2;
+                        self.read_dict_body(depth)
+                    } else {
                         self.pos += 1;
-                        break;
-                    }
-                    match self.read_object() {
-                        Some(o) => items.push(o),
-                        // Malformed: skip one byte so a bad token cannot loop forever.
-                        None => {
-                            if self.bump().is_none() {
-                                break;
-                            }
-                        }
+                        Some(Object::String(self.read_hex_string()))
                     }
                 }
-                Some(Object::Array(items))
-            }
-            b']' | b'>' | b')' | b'}' => None,
-            b'{' => {
-                // PostScript-function procedure braces; not valid at object level. Skip.
-                self.pos += 1;
-                self.read_object()
-            }
-            _ => {
-                let start = self.pos;
-                let tok = self.read_regular();
-                if tok.is_empty() {
-                    // A stray delimiter we do not understand; consume so callers make progress.
+                b'[' => {
                     self.pos += 1;
-                    return self.read_object();
-                }
-                match tok {
-                    b"true" => Some(Object::Bool(true)),
-                    b"false" => Some(Object::Bool(false)),
-                    b"null" => Some(Object::Null),
-                    _ => {
-                        if let Some(num) = Self::parse_number(tok) {
-                            if let Object::Int(n) = num {
-                                // Try `n g R`.
-                                let mark = self.pos;
-                                self.skip_ws();
-                                let gen_tok = self.read_regular().to_vec();
-                                if let Some(Object::Int(g)) = Self::parse_number(&gen_tok) {
-                                    self.skip_ws();
-                                    if self.eat_keyword(b"R")
-                                        && n >= 0
-                                        && (0..=u32::MAX as i64).contains(&n)
-                                        && (0..=u16::MAX as i64).contains(&g)
-                                    {
-                                        return Some(Object::Ref(ObjRef::new(n as u32, g as u16)));
-                                    }
+                    let mut items = Vec::new();
+                    loop {
+                        self.skip_ws();
+                        if self.peek() == Some(b']') {
+                            self.pos += 1;
+                            break;
+                        }
+                        match self.read_object_at(depth + 1) {
+                            Some(o) => items.push(o),
+                            // Malformed, or nested too deep: skip one byte so a bad token cannot
+                            // loop forever.
+                            None => {
+                                if self.bump().is_none() {
+                                    break;
                                 }
-                                self.pos = mark;
                             }
-                            Some(num)
-                        } else {
-                            // An unknown keyword: report as a name-like token so the caller can
-                            // decide (content streams treat these as operators). At object level
-                            // it is malformed; rewind so `eat_keyword` callers can see it.
-                            self.pos = start;
-                            None
+                        }
+                    }
+                    Some(Object::Array(items))
+                }
+                b']' | b'>' | b')' | b'}' => None,
+                b'{' => {
+                    // PostScript-function procedure braces; not valid at object level. Skip.
+                    self.pos += 1;
+                    continue;
+                }
+                _ => {
+                    let start = self.pos;
+                    let tok = self.read_regular();
+                    if tok.is_empty() {
+                        // A stray delimiter we do not understand; consume so callers make progress.
+                        self.pos += 1;
+                        continue;
+                    }
+                    match tok {
+                        b"true" => Some(Object::Bool(true)),
+                        b"false" => Some(Object::Bool(false)),
+                        b"null" => Some(Object::Null),
+                        _ => {
+                            if let Some(num) = Self::parse_number(tok) {
+                                if let Object::Int(n) = num {
+                                    // Try `n g R`.
+                                    let mark = self.pos;
+                                    self.skip_ws();
+                                    let gen_tok = self.read_regular().to_vec();
+                                    if let Some(Object::Int(g)) = Self::parse_number(&gen_tok) {
+                                        self.skip_ws();
+                                        if self.eat_keyword(b"R")
+                                            && n >= 0
+                                            && (0..=u32::MAX as i64).contains(&n)
+                                            && (0..=u16::MAX as i64).contains(&g)
+                                        {
+                                            return Some(Object::Ref(ObjRef::new(
+                                                n as u32, g as u16,
+                                            )));
+                                        }
+                                    }
+                                    self.pos = mark;
+                                }
+                                Some(num)
+                            } else {
+                                // An unknown keyword: report as a name-like token so the caller
+                                // can decide (content streams treat these as operators). At object
+                                // level it is malformed; rewind so `eat_keyword` callers can see
+                                // it.
+                                self.pos = start;
+                                None
+                            }
                         }
                     }
                 }
-            }
+            };
         }
     }
 
     /// Parses dictionary entries, positioned after `<<`. Consumes the closing `>>`.
-    fn read_dict_body(&mut self) -> Option<Object> {
+    fn read_dict_body(&mut self, depth: usize) -> Option<Object> {
         let mut dict = Dict::new();
         loop {
             self.skip_ws();
@@ -333,10 +360,11 @@ impl<'a> Cursor<'a> {
                 Some(b'/') => {
                     self.pos += 1;
                     let key = self.read_name();
-                    match self.read_object() {
+                    match self.read_object_at(depth + 1) {
                         Some(value) => dict.insert(key, value),
                         None => {
-                            // `/Key >>`: a key with no value; drop the key.
+                            // `/Key >>`: a key with no value, or nesting past the depth limit;
+                            // drop the key.
                         }
                     }
                 }
@@ -517,6 +545,55 @@ mod tests {
         assert_eq!(d.get("A"), Some(&Object::Int(1)));
         let b = d.get("B").unwrap().as_dict().unwrap();
         assert_eq!(b.get("C"), Some(&Object::String(b"x".to_vec())));
+    }
+
+    #[test]
+    fn deep_nesting_is_bounded_not_fatal() {
+        // Each `[` used to cost a stack frame, so a file like this aborted the process.
+        let bytes = vec![b'['; 100_000];
+        let o = Cursor::new(&bytes).read_object();
+        assert!(matches!(o, Some(Object::Array(_))));
+
+        // A closed version parses to the same depth without running away either.
+        let mut bytes = vec![b'['; 100_000];
+        bytes.extend(std::iter::repeat_n(b']', 100_000));
+        assert!(matches!(
+            Cursor::new(&bytes).read_object(),
+            Some(Object::Array(_))
+        ));
+
+        // Braces and stray delimiters are skipped iteratively, so a long run costs no stack.
+        let mut bytes = vec![b'{'; 100_000];
+        bytes.push(b'7');
+        assert_eq!(Cursor::new(&bytes).read_object(), Some(Object::Int(7)));
+
+        let bytes = vec![b'{'; 100_000];
+        assert_eq!(Cursor::new(&bytes).read_object(), None);
+
+        // Dictionaries nest through the same counter.
+        let mut src = Vec::new();
+        for _ in 0..100_000 {
+            src.extend_from_slice(b"<</A ");
+        }
+        assert!(matches!(
+            Cursor::new(&src).read_object(),
+            Some(Object::Dict(_))
+        ));
+    }
+
+    #[test]
+    fn nesting_within_the_limit_still_parses() {
+        let depth = 100;
+        let mut src = vec![b'['; depth];
+        src.push(b'9');
+        src.extend(std::iter::repeat_n(b']', depth));
+        let mut o = Cursor::new(&src).read_object().unwrap();
+        for _ in 0..depth {
+            let Object::Array(items) = o else { panic!() };
+            assert_eq!(items.len(), 1);
+            o = items.into_iter().next().unwrap();
+        }
+        assert_eq!(o, Object::Int(9));
     }
 
     #[test]

@@ -1010,8 +1010,12 @@ fn cid_widths(doc: &Document, descendant: &Dict) -> Widths {
             match items.get(i + 1) {
                 Some(Object::Array(list)) => {
                     for (k, item) in list.iter().enumerate() {
+                        // A `/W` array starting near u32::MAX runs off the end of the CID space.
+                        let Some(cid) = start.checked_add(k as u32) else {
+                            break;
+                        };
                         if let Some(width) = doc.resolve(item).as_f32() {
-                            map.insert(start + k as u32, width);
+                            map.insert(cid, width);
                         }
                     }
                     i += 2;

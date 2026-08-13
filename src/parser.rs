@@ -177,8 +177,13 @@ impl PdfFile {
                 let (Some(offset), Some(gen)) = (f1, f2) else {
                     return Err(Error::Parse("bad xref entry".into()));
                 };
+                // `start` and `count` are both attacker-controlled; a subsection claiming to
+                // begin near u32::MAX has no valid object numbers left, so skip what overflows.
                 if kind == b"n" {
-                    xref.entry(start + i).or_insert(XrefEntry::Offset {
+                    let Some(num) = start.checked_add(i) else {
+                        continue;
+                    };
+                    xref.entry(num).or_insert(XrefEntry::Offset {
                         offset: offset as usize,
                         gen: gen.clamp(0, u16::MAX as i64) as u16,
                     });

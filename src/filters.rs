@@ -7,6 +7,14 @@
 use crate::error::{Error, Result};
 use crate::object::{Dict, Object};
 
+/// The most a single stream may decompress to.
+///
+/// Flate and LZW both have compression ratios of a thousand to one and better, so a few kilobytes
+/// of hostile input can otherwise ask for gigabytes of memory. Real streams are far smaller than
+/// this; a stream that reaches the cap is truncated there, the same as a corrupt tail, rather than
+/// failing the document.
+const MAX_DECOMPRESSED: usize = 256 << 20;
+
 /// The result of running a stream's filter chain.
 pub struct Decoded {
     pub data: Vec<u8>,
@@ -109,7 +117,7 @@ fn decode_parms(dict: &Dict, n: usize, resolve: &dyn Fn(&Object) -> Object) -> V
 /// Inflates zlib or raw deflate data, keeping whatever decoded cleanly when the tail is corrupt.
 ///
 /// Truncated and trailing-garbage Flate streams are common enough in the wild that failing hard
-/// would reject otherwise fine documents.
+/// would reject otherwise fine documents. Output stops at [`MAX_DECOMPRESSED`].
 fn inflate(data: &[u8]) -> Result<Vec<u8>> {
     use flate2::{Decompress, FlushDecompress, Status};
 
@@ -133,7 +141,12 @@ fn inflate(data: &[u8]) -> Result<Vec<u8>> {
             FlushDecompress::None,
         );
         let produced = (inflater.total_out() - before_out) as usize;
-        out.extend_from_slice(&buf[..produced]);
+        let room = MAX_DECOMPRESSED - out.len();
+        out.extend_from_slice(&buf[..produced.min(room)]);
+        if produced >= room {
+            // A zip bomb, or a stream far larger than anything a page needs; keep the prefix.
+            break;
+        }
         match status {
             Ok(Status::StreamEnd) => break,
             Ok(_) => {
@@ -242,11 +255,12 @@ fn tiff_predictor(mut data: Vec<u8>, colors: usize, bpc: usize, columns: usize) 
     data
 }
 
+/// Decodes LZW, stopping at [`MAX_DECOMPRESSED`] output bytes.
 fn lzw_decode(data: &[u8], early_change: bool) -> Vec<u8> {
     const CLEAR: u16 = 256;
     const EOD: u16 = 257;
 
-    let mut out = Vec::with_capacity(data.len() * 3);
+    let mut out = Vec::with_capacity(data.len().saturating_mul(3).min(1 << 20));
     let mut table: Vec<Vec<u8>> = Vec::new();
     let reset = |table: &mut Vec<Vec<u8>>| {
         table.clear();
@@ -291,6 +305,12 @@ fn lzw_decode(data: &[u8], early_change: bool) -> Vec<u8> {
             } else {
                 return out; // Corrupt.
             };
+            let room = MAX_DECOMPRESSED - out.len();
+            if entry.len() >= room {
+                // A bomb, or a stream far larger than anything a page needs; keep the prefix.
+                out.extend_from_slice(&entry[..room]);
+                return out;
+            }
             out.extend_from_slice(&entry);
             if let Some(p) = prev {
                 let mut ne = table[p as usize].clone();
@@ -440,6 +460,27 @@ mod tests {
         let d = decode(&dict, &compressed, &no_resolve).unwrap();
         assert!(!d.data.is_empty());
         assert!(d.data.iter().all(|&b| b == 7));
+    }
+
+    #[test]
+    fn flate_bomb_is_capped() {
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        // Half a gigabyte of zeros in about a megabyte of stream: the shape of a zip bomb.
+        let chunk = vec![0u8; 1 << 20];
+        let mut enc = ZlibEncoder::new(Vec::new(), Compression::best());
+        for _ in 0..512 {
+            enc.write_all(&chunk).unwrap();
+        }
+        let compressed = enc.finish().unwrap();
+        assert!(compressed.len() < 1 << 21, "test bomb should be small");
+
+        let mut dict = Dict::new();
+        dict.insert("Filter", Object::Name("FlateDecode".into()));
+        let d = decode(&dict, &compressed, &no_resolve).unwrap();
+        assert_eq!(d.data.len(), MAX_DECOMPRESSED);
     }
 
     #[test]

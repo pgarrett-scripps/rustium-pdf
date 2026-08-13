@@ -371,10 +371,14 @@ type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
 pub fn rc4(key: &[u8], data: &[u8]) -> Vec<u8> {
+    if key.is_empty() {
+        // RC4 has no empty-key schedule; a malformed /Encrypt dict must not panic the reader.
+        return data.to_vec();
+    }
     let mut s: [u8; 256] = std::array::from_fn(|i| i as u8);
     let mut j = 0u8;
     for i in 0..256 {
-        j = j.wrapping_add(s[i]).wrapping_add(key[i % key.len().max(1)]);
+        j = j.wrapping_add(s[i]).wrapping_add(key[i % key.len()]);
         s.swap(i, j as usize);
     }
     let (mut i, mut j) = (0u8, 0u8);

@@ -379,10 +379,11 @@ fn decode_to_rgba(doc: &Document, item: &ImageItem) -> Option<Pixmap> {
                             1 => (vals[0], vals[0], vals[0], 255),
                             3 => (vals[0], vals[1], vals[2], 255),
                             4 => {
-                                // Naive CMYK, matching the interpreter's colour conversion.
+                                // Naive CMYK, matching the interpreter's colour conversion:
+                                // `(1 - c) * (1 - k)` per channel.
                                 let k = vals[3] as f32 / 255.0;
                                 let f = |v: u8| (((255 - v) as f32) * (1.0 - k)) as u8;
-                                (f(255 - vals[0]), f(255 - vals[1]), f(255 - vals[2]), 255)
+                                (f(vals[0]), f(vals[1]), f(vals[2]), 255)
                             }
                             _ => (vals[0], vals[0], vals[0], 255),
                         }
@@ -453,6 +454,28 @@ mod tests {
             (255, 255, 255, 255),
             "top-left is background"
         );
+    }
+
+    #[test]
+    fn cmyk_image_samples_are_not_inverted() {
+        // One DeviceCMYK pixel stretched over the page: C=0x60 M=0x20 Y=0x10 K=0x40, which is a
+        // pale cyan. The samples used to be inverted twice, turning it into a dark red.
+        let doc = doc_with(
+            "q 612 0 0 792 0 0 cm BI /W 1 /H 1 /BPC 8 /CS /CMYK ID \u{60}\u{20}\u{10}\u{40} EI Q",
+        );
+        let page = doc.page(0).unwrap();
+        let img = page.render(&doc, RenderOptions::at_dpi(72.0)).unwrap();
+        let (r, g, b, a) = px(&img, 306, 396);
+        assert_eq!(a, 255);
+        // (255 - component) * (1 - k), so cyan leaves the red channel darkest.
+        let want = |c: u8| ((255 - c) as f32 * (1.0 - 0x40 as f32 / 255.0)) as u8;
+        for (got, expect) in [(r, want(0x60)), (g, want(0x20)), (b, want(0x10))] {
+            assert!(
+                got.abs_diff(expect) <= 1,
+                "channel {got} should be about {expect}"
+            );
+        }
+        assert!(r < g && g < b, "cyan-dominant, not the inverted red");
     }
 
     #[test]
