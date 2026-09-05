@@ -13,7 +13,7 @@ keywords = ["pdf", "parser", "text-extraction", "render", "fonts"]
 categories = ["parser-implementations", "text-processing", "rendering"]
 # The published tarball carries the library and its examples, nothing else. corpus_diverse is
 # development tooling — a Python scorer and a downloader — and has no business in a crate.
-exclude = ["/.github", "/target", "/corpus_diverse", "*.png", "*.pdf"]
+exclude = ["/.github", "/target", "/corpus_diverse", "/fuzz", "*.png"]
 
 [dependencies]
 flate2 = "1"
