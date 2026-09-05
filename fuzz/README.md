@@ -1,7 +1,11 @@
 The `document` target exercises parsing, page extraction, and rendering.
-It limits input size and page count. The command also bounds execution time
+It limits input size, page count, and the rendered viewport to 256 by 256 pixels.
+The viewport keeps mutated page dimensions from requesting a large raster that
+exceeds the fuzz process budget. Parsing and text extraction still see each page.
+The command also bounds execution time
 per input and resident memory. Valid and cyclic page-tree seeds live in
-`tests/fixtures/`, alongside deterministic mutation regressions.
+`tests/fixtures/`, alongside deterministic mutation regressions. An oversized-page
+seed preserves the first CI finding and checks rendering within the viewport.
 
 ```sh
 cargo install cargo-fuzz --version 0.13.2 --locked

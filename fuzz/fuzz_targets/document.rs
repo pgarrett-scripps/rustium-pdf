@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use rustium_pdf::{Document, RenderOptions};
+use rustium_pdf::{Document, Rect, RenderOptions};
 
 fuzz_target!(|data: &[u8]| {
     if data.len() > 262_144 {
@@ -13,8 +13,10 @@ fuzz_target!(|data: &[u8]| {
     for index in 0..document.page_count().min(4) {
         if let Ok(page) = document.page(index) {
             let _ = page.text();
-            // The fuzzer has an RSS limit. The renderer must reject invalid geometry.
-            let _ = page.render(&document, RenderOptions::at_dpi(8.0));
+            // Bound the requested raster independently of attacker-controlled page size.
+            // At 8 dpi this viewport is at most 256 by 256 pixels.
+            let region = Rect::from_corners(0.0, 0.0, 2304.0, 2304.0);
+            let _ = page.render_region(&document, Some(region), RenderOptions::at_dpi(8.0));
         }
     }
 });
