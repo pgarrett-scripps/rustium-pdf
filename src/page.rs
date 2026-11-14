@@ -315,7 +315,10 @@ impl Page {
     pub fn text(&self) -> String {
         let mut out = String::new();
         let mut prev: Option<&Glyph> = None;
-        for g in &self.glyphs {
+        // A glyph with no text — unmapped, or silenced by `/ActualText` — contributes nothing,
+        // a line break included: one at the head of a line would otherwise break it twice, once
+        // for itself and once for the first glyph that does say something.
+        for g in self.glyphs.iter().filter(|g| !g.text.is_empty()) {
             // A content stream carries no line breaks: a new line is just a glyph placed at a
             // different baseline. Concatenating blindly fuses the last word of one line onto
             // the first of the next — "of" + "the" becomes "ofthe" — which silently destroys
@@ -326,9 +329,7 @@ impl Page {
                 }
             }
             out.push_str(&g.text);
-            if !g.text.is_empty() {
-                prev = Some(g);
-            }
+            prev = Some(g);
         }
         out
     }
@@ -506,10 +507,30 @@ impl<'a> Interpreter<'a> {
             // end — "yi ding ( name@host )" carries four. Lines here are a matter of geometry,
             // as everywhere else in this module; what the tag reliably says is that the glyph
             // is whitespace.
+            //
+            // Every other kind of whitespace becomes a space for the same reason. Springer's
+            // typesetter tags ordinary space glyphs with a tab after a list label
+            // ("1.<tab>Lahiry") and with a no-break space wherever a line must not break
+            // ("et<nbsp>al."). Both say how the line was laid out, not what it reads, and a
+            // consumer splitting on spaces would otherwise see the label fused to its entry.
+            // Its other layout marks go the same way. Control characters (it tags the gap in a
+            // two-column list with U+0007 and the one before an equation number with U+0008)
+            // are spaces too. Marks with no width — a zero-width space where a URL may break,
+            // a word joiner, a left-to-right or right-to-left mark — are dropped like the soft
+            // hyphen they resemble. A non-breaking hyphen reads as a hyphen.
             let pending = text
                 .chars()
-                .filter(|&c| c != '\u{00AD}')
-                .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c })
+                .filter(|&c| {
+                    !matches!(
+                        c,
+                        '\u{00AD}' | '\u{200B}' | '\u{200E}' | '\u{200F}' | '\u{2060}' | '\u{FEFF}'
+                    )
+                })
+                .map(|c| match c {
+                    '\u{2011}' => '-',
+                    c if c.is_whitespace() || c.is_control() => ' ',
+                    c => c,
+                })
                 .collect();
             self.span = Some(ActualText { pending });
         }

@@ -122,6 +122,58 @@ fn a_form_drawn_inside_a_span_belongs_to_it() {
     );
 }
 
+/// The head of a Springer reference list, operator for operator: the space before the label and
+/// the one after it are each tagged with a tab, and the space in "et al." with a no-break space.
+const SPRINGER_REFERENCE: &str = "BT /F1 1 Tf 8 0 0 8 56.69 700 Tm \
+     /Span<</ActualText<FEFF0009>>>BDC 0 -1.2 Td ( )Tj EMC \
+     .133 0 Td (1.)Tj \
+     /Span<</ActualText<FEFF0009>>>BDC ( )Tj EMC \
+     1.867 0 Td [(Lahir)-30(y P)138(, et)]TJ \
+     /Span<</ActualText<FEFF00A0>>>BDC ( )Tj EMC \
+     [(al)11(. K)-15(inase mutations)]TJ ET";
+
+#[test]
+fn a_space_tagged_as_a_tab_or_no_break_space_is_still_a_space() {
+    // 0.1.2 passed the tags through, so the label read "1.\tLahiry" and anything splitting on
+    // spaces saw it fused to the entry.
+    assert_eq!(
+        text(SPRINGER_REFERENCE),
+        " 1. Lahiry P, et al. Kinase mutations"
+    );
+}
+
+#[test]
+fn layout_marks_in_actual_text_are_not_content() {
+    let tagged = |value: &str| {
+        text(&format!(
+            "BT /F1 12 Tf 72 720 Td (a) Tj /Span<</ActualText {value}>>BDC ( ) Tj EMC (b) Tj ET"
+        ))
+    };
+    // Every kind of space, and the control characters Springer uses as column gaps.
+    for space in ["0009", "00A0", "2002", "2009", "202F", "0007", "0008"] {
+        assert_eq!(tagged(&format!("<FEFF{space}>")), "a b", "U+{space}");
+    }
+    // Break opportunities and direction marks have no width and no text: the URL they were
+    // typeset into reads unbroken.
+    for mark in ["200B", "200E", "200F", "2060", "00AD"] {
+        assert_eq!(tagged(&format!("<FEFF{mark}>")), "ab", "U+{mark}");
+    }
+    // A non-breaking hyphen is a hyphen, and real replacement text around a mark survives.
+    assert_eq!(tagged("<FEFF2011>"), "a-b");
+    assert_eq!(tagged("<FEFF002F200B>"), "a/b");
+}
+
+#[test]
+fn a_silenced_glyph_at_the_head_of_a_line_does_not_break_it_twice() {
+    assert_eq!(
+        text(
+            "BT /F1 12 Tf 72 720 Td (one) Tj 0 -14 Td \
+             /Span<</ActualText<FEFF200B>>>BDC ( ) Tj EMC (two) Tj ET"
+        ),
+        "one\ntwo"
+    );
+}
+
 #[test]
 fn a_form_cannot_close_or_leak_into_its_callers_marked_content() {
     // The form closes a sequence it never opened and leaves one of its own open. Neither may
