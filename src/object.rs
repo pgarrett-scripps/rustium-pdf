@@ -144,13 +144,15 @@ impl Object {
 /// Bytes PDFDocEncoding leaves undefined are dropped rather than guessed at.
 pub(crate) fn text_string(bytes: &[u8]) -> String {
     let utf16 = |rest: &[u8], big_endian: bool| {
-        let units: Vec<u16> = rest
-            .chunks_exact(2)
-            .map(|p| {
+        // A dangling odd byte is left in the remainder and ignored.
+        let (pairs, _) = rest.as_chunks::<2>();
+        let units: Vec<u16> = pairs
+            .iter()
+            .map(|&pair| {
                 if big_endian {
-                    u16::from_be_bytes([p[0], p[1]])
+                    u16::from_be_bytes(pair)
                 } else {
-                    u16::from_le_bytes([p[0], p[1]])
+                    u16::from_le_bytes(pair)
                 }
             })
             .collect();
