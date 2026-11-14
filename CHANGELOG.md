@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-14
+
 ### Fixed
 
 - **`/ActualText` is honoured.** Inside a marked-content sequence that carries it, the
@@ -19,6 +21,28 @@ All notable changes to this project are documented here. The format follows
   form XObject drawn inside a sequence is part of it. A line break in the replacement reads as
   a space: Chromium tags spaces with a line feed at HTML block boundaries, which are often
   mid-line, and line breaks remain a matter of geometry.
+
+### Added
+
+- Committed regression fixtures for hostile input (`tests/hostile_input.rs`) and a bounded
+  `cargo fuzz` target, neither of which ships in the crate.
+
+## [0.1.1] - 2026-08-13
+
+The reader survives hostile input. No API change.
+
+### Fixed
+
+- **Deeply nested objects no longer overflow the stack.** The object grammar recursed once per
+  `[` and once per `{`, so a hundred thousand delimiter bytes aborted the process. Nesting now
+  stops at a depth of 150, and braces and stray delimiters are skipped without recursion.
+- **Decompression is bounded.** Flate and LZW stop at 256 MB of output and keep the prefix, the
+  same way a corrupt tail is handled, so a kilobyte of stream cannot ask for gigabytes.
+- **CMYK image colour.** Samples were inverted twice, which rendered pale cyan as dark red.
+  They now convert the way vector colours do.
+- An empty RC4 key returns the data unchanged instead of indexing an empty slice.
+- Object numbers taken from xref subsection headers and `/W` arrays are formed with checked
+  arithmetic; entries that run off the end of the number space are skipped.
 
 ## [0.1.0] - 2026-08-02
 
@@ -63,5 +87,7 @@ First release.
   rendering. `DCTDecode` (JPEG) is handled.
 - Clipping is tracked as a bounding rectangle rather than an arbitrary path.
 
-[Unreleased]: https://github.com/pgarrett-scripps/rustium-pdf/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/pgarrett-scripps/rustium-pdf/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/pgarrett-scripps/rustium-pdf/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/pgarrett-scripps/rustium-pdf/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/pgarrett-scripps/rustium-pdf/releases/tag/v0.1.0
