@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::font::glyph::PathCmd;
 use crate::font::{CodeItem, Font, FontFlags};
 use crate::geom::{Matrix, Point, Rect};
-use crate::object::{Dict, ObjRef, Object};
+use crate::object::{text_string, Dict, ObjRef, Object};
 
 /// Nesting limit for form XObjects and Type3 glyph procedures.
 const MAX_DEPTH: usize = 12;
@@ -28,6 +28,11 @@ const BASELINE_EPSILON_EM: f32 = 0.10;
 #[derive(Debug, Clone)]
 pub struct Glyph {
     /// The text this glyph contributes. Usually one character; ligatures expand to several.
+    ///
+    /// Inside a marked-content sequence that carries `/ActualText`, the document has said what
+    /// the sequence reads as, and that replaces what its glyphs would say one by one: the first
+    /// glyph of the sequence holds the whole replacement and the rest hold nothing. Every glyph
+    /// keeps its own geometry either way.
     pub text: String,
     /// The baseline origin, in user space.
     pub origin: Point,
@@ -425,8 +430,28 @@ struct Interpreter<'a> {
     /// Form XObjects currently being executed, to stop a self-referential form.
     active_forms: HashSet<u32>,
     trail: Option<PenTrail>,
+    /// Whether the text most recently emitted ended in whitespace, so a gap after it does not
+    /// earn a second space. Glyphs silenced by an `/ActualText` span leave it alone.
+    last_was_space: bool,
+    /// One entry per open marked-content sequence (`BMC`/`BDC`), true for the one that opened
+    /// `span`. Kept on the interpreter rather than in `run` because a form XObject invoked
+    /// inside a sequence is part of it.
+    marked: Vec<bool>,
+    /// The `/ActualText` replacement in force, if any.
+    span: Option<ActualText>,
     /// Monotonic paint-order counter, shared by every primitive type.
     order: u32,
+}
+
+/// An open marked-content sequence whose `/ActualText` replaces the text of the glyphs in it.
+///
+/// Producers use it where a glyph cannot speak for itself — Chromium's PDF backend ships
+/// ligatures and some digits with no `/ToUnicode` entry and only this to say what they are —
+/// and where what is drawn differs from what is meant, such as a hyphen at a line break.
+struct ActualText {
+    /// The replacement, until the first glyph of the sequence takes it; empty from then on.
+    /// Empty from the start when the document declares that the glyphs carry no text.
+    pending: String,
 }
 
 /// The state of the current text object, reset by `BT`.
@@ -445,7 +470,57 @@ impl<'a> Interpreter<'a> {
             font_cache: HashMap::new(),
             active_forms: HashSet::new(),
             trail: None,
+            last_was_space: false,
+            marked: Vec::new(),
+            span: None,
             order: 0,
+        }
+    }
+
+    /// Opens a marked-content sequence. `properties` is the `BDC` operand — an inline
+    /// dictionary or a name into the `/Properties` resources — and absent for `BMC`.
+    fn begin_marked(&mut self, properties: Option<&Object>, resources: &Dict) {
+        // Sequences nest, and the outermost `/ActualText` speaks for everything inside it, so
+        // one that opens while another is in force changes nothing.
+        let replacement = match properties {
+            Some(props) if self.span.is_none() => {
+                let dict = match props {
+                    Object::Name(name) => self
+                        .doc
+                        .dict_get(resources, "Properties")
+                        .and_then(|p| p.as_dict().and_then(|d| self.doc.dict_get(d, name))),
+                    other => Some(self.doc.resolve(other)),
+                };
+                dict.and_then(|d| self.doc.dict_get(d.as_dict()?, "ActualText"))
+                    .and_then(|o| o.as_string().map(text_string))
+            }
+            _ => None,
+        };
+        self.marked.push(replacement.is_some());
+        if let Some(text) = replacement {
+            // Soft hyphens are no more content here than in a glyph's own mapping.
+            //
+            // A line break in the replacement becomes a space. Chromium tags space glyphs with
+            // an `/ActualText` of a line feed wherever the HTML it printed had a block or
+            // `<br>` boundary, and those fall in the middle of a visual line as often as at its
+            // end — "yi ding ( name@host )" carries four. Lines here are a matter of geometry,
+            // as everywhere else in this module; what the tag reliably says is that the glyph
+            // is whitespace.
+            let pending = text
+                .chars()
+                .filter(|&c| c != '\u{00AD}')
+                .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c })
+                .collect();
+            self.span = Some(ActualText { pending });
+        }
+    }
+
+    /// Closes the innermost marked-content sequence opened at or above `floor`, the depth the
+    /// current content stream started at: a stream cannot close a sequence its caller opened.
+    fn end_marked(&mut self, floor: usize) {
+        if self.marked.len() > floor && self.marked.pop() == Some(true) {
+            // A replacement no glyph claimed has no geometry to attach to, and is dropped.
+            self.span = None;
         }
     }
 
@@ -453,6 +528,7 @@ impl<'a> Interpreter<'a> {
         if depth > MAX_DEPTH {
             return;
         }
+        let marked_floor = self.marked.len();
         let mut stack: Vec<State> = Vec::new();
         let mut gs = initial;
         let mut text = TextState {
@@ -742,8 +818,20 @@ impl<'a> Interpreter<'a> {
                         self.record_inline_image(&dict, &data, &gs, resources);
                     }
                 }
+
+                // ---- marked content ----
+                "BMC" => self.begin_marked(None, resources),
+                "BDC" => {
+                    self.begin_marked(Some(op.operands.get(1).unwrap_or(&Object::Null)), resources)
+                }
+                "EMC" => self.end_marked(marked_floor),
                 _ => {}
             }
+        }
+        // Sequences must balance within a stream; one left open by a damaged stream ends here
+        // rather than swallowing the text of everything drawn afterwards.
+        while self.marked.len() > marked_floor {
+            self.end_marked(marked_floor);
         }
     }
 
@@ -807,13 +895,23 @@ impl<'a> Interpreter<'a> {
     ) {
         // Soft hyphens mark optional break points and are not content; producers emit them at
         // line ends where they would otherwise appear as stray hyphens in extracted text.
-        let text: String = item
+        let own: String = item
             .unicode
             .as_deref()
             .unwrap_or("")
             .chars()
             .filter(|&c| c != '\u{00AD}')
             .collect();
+        // Inside an `/ActualText` span the document's replacement outranks the glyph's own
+        // mapping: the first glyph takes all of it and the rest go silent. A silent glyph is
+        // skipped by the gap logic below exactly as an unmapped one is, so the replacement is
+        // spaced as a unit — from its first glyph's origin and from its last glyph's end —
+        // and never broken up by gaps between the glyphs it replaces.
+        let in_span = self.span.is_some();
+        let text = match self.span.as_mut() {
+            Some(span) => std::mem::take(&mut span.pending),
+            None => own,
+        };
 
         let origin = trm.apply(Point::default());
         // The rendering matrix already folds in `/Tf` size, `Tm` and the CTM, so its vertical
@@ -830,40 +928,50 @@ impl<'a> Interpreter<'a> {
                 let same_line =
                     (origin.y - prev.baseline_y).abs() <= BASELINE_EPSILON_EM * prev.size;
                 let gap = origin.x - prev.end.x;
-                if same_line && prev.size > 0.0 && gap > SPACE_GAP_EM * prev.size {
-                    let already_space = self
-                        .glyphs
-                        .last()
-                        .is_some_and(|g| g.text.chars().all(char::is_whitespace));
-                    if !already_space && !text.starts_with(char::is_whitespace) {
-                        let order = self.next_order();
-                        self.glyphs.push(Glyph {
-                            text: " ".into(),
-                            origin: prev.end,
-                            bbox: Rect::from_corners(
-                                prev.end.x,
-                                prev.baseline_y,
-                                origin.x,
-                                prev.baseline_y + prev.size,
-                            ),
-                            advance: gap,
-                            font_size: prev.size,
-                            font_name: gs.font_name.clone(),
-                            base_font: font.base_font.clone(),
-                            flags: font.flags,
-                            rotation: trm.rotation(),
-                            is_generated_space: true,
-                            render_mode: gs.render_mode,
-                            color: gs.fill,
-                            alpha: gs.fill_alpha,
-                            order,
-                            font: None,
-                            code: item.clone(),
-                            glyph_matrix: *trm,
-                        });
-                    }
+                if same_line
+                    && prev.size > 0.0
+                    && gap > SPACE_GAP_EM * prev.size
+                    && !self.last_was_space
+                    && !text.starts_with(char::is_whitespace)
+                {
+                    let order = self.next_order();
+                    self.glyphs.push(Glyph {
+                        text: " ".into(),
+                        origin: prev.end,
+                        bbox: Rect::from_corners(
+                            prev.end.x,
+                            prev.baseline_y,
+                            origin.x,
+                            prev.baseline_y + prev.size,
+                        ),
+                        advance: gap,
+                        font_size: prev.size,
+                        font_name: gs.font_name.clone(),
+                        base_font: font.base_font.clone(),
+                        flags: font.flags,
+                        rotation: trm.rotation(),
+                        is_generated_space: true,
+                        render_mode: gs.render_mode,
+                        color: gs.fill,
+                        alpha: gs.fill_alpha,
+                        order,
+                        font: None,
+                        code: item.clone(),
+                        glyph_matrix: *trm,
+                    });
                 }
             }
+        }
+
+        if in_span {
+            // A silenced glyph says nothing about how the text before it ended.
+            if !text.is_empty() {
+                self.last_was_space = text.ends_with(char::is_whitespace);
+            }
+        } else {
+            // An unmapped glyph counts as a space here, as it always has: no gap after it
+            // generates one.
+            self.last_was_space = text.chars().all(char::is_whitespace);
         }
 
         let (bbox, glyph_matrix) = self.glyph_bbox(font, item, trm);
@@ -1422,6 +1530,201 @@ pub(crate) mod tests {
         assert!((h.advance - 722.0 / 1000.0 * 12.0).abs() < 0.01);
         // The next glyph starts exactly one advance along.
         assert!((page.glyphs[1].origin.x - (72.0 + 8.664)).abs() < 0.01);
+    }
+
+    fn text_of(content: &str) -> String {
+        doc_with(content).page(0).unwrap().text()
+    }
+
+    #[test]
+    fn actual_text_replaces_what_its_glyphs_say_and_keeps_where_they_are() {
+        let plain = doc_with("BT /F1 12 Tf 72 720 Td (a) Tj (xy) Tj (b) Tj ET");
+        let tagged = doc_with(
+            "BT /F1 12 Tf 72 720 Td (a) Tj /Span <</ActualText (fi)>> BDC (xy) Tj EMC (b) Tj ET",
+        );
+        let (plain, tagged) = (plain.page(0).unwrap(), tagged.page(0).unwrap());
+        assert_eq!(plain.text(), "axyb");
+        assert_eq!(tagged.text(), "afib");
+
+        // The first glyph of the span carries the replacement and the rest carry nothing.
+        let texts: Vec<&str> = tagged.glyphs.iter().map(|g| g.text.as_str()).collect();
+        assert_eq!(texts, ["a", "fi", "", "b"]);
+
+        // Geometry and identity are untouched: same glyphs, in the same places.
+        assert_eq!(plain.glyphs.len(), tagged.glyphs.len());
+        for (p, t) in plain.glyphs.iter().zip(&tagged.glyphs) {
+            assert_eq!((p.origin, p.bbox, p.advance), (t.origin, t.bbox, t.advance));
+            assert_eq!(p.code(), t.code());
+        }
+    }
+
+    #[test]
+    fn actual_text_spans_several_show_operators_as_one_unit() {
+        // Three operators, a line-internal move and a word-sized TJ gap, all inside one span:
+        // the replacement is the whole of what they say, with no space invented within it.
+        let doc = doc_with(
+            "BT /F1 12 Tf 72 720 Td (A) Tj /Span <</ActualText (68)>> BDC \
+             (x) Tj 20 0 Td (y) Tj [(z) -500 (w)] TJ EMC (B) Tj ET",
+        );
+        let page = doc.page(0).unwrap();
+        assert_eq!(page.text(), "A68B");
+        assert_eq!(page.glyphs.len(), 6);
+        assert!(page.glyphs.iter().all(|g| !g.is_generated_space));
+    }
+
+    #[test]
+    fn the_outermost_actual_text_wins() {
+        // The inner span neither adds its text nor ends the outer one early.
+        assert_eq!(
+            text_of(
+                "BT /F1 12 Tf 72 720 Td /Span <</ActualText (out)>> BDC (a) Tj \
+                 /Span <</ActualText (in)>> BDC (b) Tj EMC (c) Tj EMC (d) Tj ET"
+            ),
+            "outd"
+        );
+        // Enclosing sequences without ActualText — structure tags, a bare BMC — are transparent,
+        // and their EMC does not disturb text after the span.
+        assert_eq!(
+            text_of(
+                "/P <</MCID 0>> BDC /Artifact BMC BT /F1 12 Tf 72 720 Td (a) Tj \
+                 /Span <</ActualText (X)>> BDC (b) Tj EMC (c) Tj ET EMC EMC \
+                 BT 1 0 0 1 100 720 Tm (d) Tj ET"
+            ),
+            "aXc d"
+        );
+    }
+
+    #[test]
+    fn an_empty_actual_text_silences_its_glyphs() {
+        for empty in ["()", "<FEFF>", "<>"] {
+            let doc = doc_with(&format!(
+                "BT /F1 12 Tf 72 720 Td (a) Tj /Span <</ActualText {empty}>> BDC (-) Tj EMC \
+                 (b) Tj ET"
+            ));
+            let page = doc.page(0).unwrap();
+            assert_eq!(page.text(), "ab", "ActualText {empty}");
+            // The hyphen is still on the page, it just reads as nothing.
+            assert_eq!(page.glyphs.len(), 3);
+            assert_eq!(page.glyphs[1].text, "");
+            assert_eq!(page.glyphs[1].code(), u32::from(b'-'));
+        }
+    }
+
+    #[test]
+    fn actual_text_is_decoded_as_a_text_string() {
+        let span = |value: &str| {
+            text_of(&format!(
+                "BT /F1 12 Tf 72 720 Td /Span <</ActualText {value}>> BDC (x) Tj EMC ET"
+            ))
+        };
+        // UTF-16BE behind a byte-order mark, as Chromium writes it.
+        assert_eq!(span("<FEFF00660069>"), "fi");
+        assert_eq!(span("<FEFF03B1D835DC00>"), "\u{3b1}\u{1D400}");
+        // No mark: PDFDocEncoding, where 0x93 is the fi ligature and not Latin-1's control code.
+        assert_eq!(span("(fi)"), "fi");
+        assert_eq!(span("(\\223 \\351)"), "\u{FB01} \u{e9}");
+        assert_eq!(span("<93>"), "\u{FB01}");
+    }
+
+    #[test]
+    fn a_gap_beside_a_span_is_one_space() {
+        // Word gaps on both sides of a span whose glyph says something else entirely.
+        assert_eq!(
+            text_of(
+                "BT /F1 12 Tf 72 720 Td [(A) -500] TJ /Span <</ActualText (6)>> BDC (x) Tj EMC \
+                 [-500 (B)] TJ ET"
+            ),
+            "A 6 B"
+        );
+        // The same gaps where the replacement brings its own spaces: none is added.
+        assert_eq!(
+            text_of(
+                "BT /F1 12 Tf 72 720 Td [(A) -500] TJ /Span <</ActualText ( 6 )>> BDC (x) Tj \
+                 EMC [-500 (B)] TJ ET"
+            ),
+            "A 6 B"
+        );
+        // No gap, no space.
+        assert_eq!(
+            text_of(
+                "BT /F1 12 Tf 72 720 Td (A) Tj /Span <</ActualText (6)>> BDC (x) Tj EMC (B) Tj ET"
+            ),
+            "A6B"
+        );
+        // A gap after a span of several glyphs is measured from the last of them, and the
+        // silent ones do not hide that the replacement ended without a space.
+        assert_eq!(
+            text_of(
+                "BT /F1 12 Tf 72 720 Td (A) Tj /Span <</ActualText (fi)>> BDC (xy) Tj EMC \
+                 [-500 (B)] TJ ET"
+            ),
+            "Afi B"
+        );
+        // Silenced glyphs between two words leave the one space the gaps amount to.
+        assert_eq!(
+            text_of(
+                "BT /F1 12 Tf 72 720 Td [(A) -500] TJ /Span <</ActualText ()>> BDC (x) Tj EMC \
+                 [-500 (B)] TJ ET"
+            ),
+            "A B"
+        );
+    }
+
+    /// Chromium tags space glyphs with a line feed at HTML block boundaries, which are not
+    /// reliably where the visual line ends. The tag reads as the space it sits on, and line
+    /// breaks stay a matter of geometry.
+    #[test]
+    fn an_actual_text_line_feed_is_a_space_not_a_line_break() {
+        // Mid-line: no break is invented.
+        assert_eq!(
+            text_of(
+                "BT /F1 12 Tf 72 720 Td (one) Tj /Span <</ActualText <FEFF000A>>> BDC ( ) Tj EMC \
+                 (two) Tj ET"
+            ),
+            "one two"
+        );
+        // At a real line end: the geometric break is the only one.
+        assert_eq!(
+            text_of(
+                "BT /F1 12 Tf 72 720 Td (one) Tj /Span <</ActualText <FEFF000A>>> BDC ( ) Tj EMC \
+                 1 0 0 1 72 700 Tm (two) Tj ET"
+            ),
+            "one \ntwo"
+        );
+    }
+
+    #[test]
+    fn actual_text_is_found_through_the_properties_resource() {
+        let base = String::from_utf8(tiny_pdf()).unwrap();
+        let pdf = base
+            .replace(
+                "/Resources << /Font",
+                "/Resources << /Properties << /MC0 << /ActualText (fl) >> >> /Font",
+            )
+            .replace(
+                "BT /F1 12 Tf 72 720 Td (Hi) Tj ET",
+                "BT /F1 12 Tf 72 720 Td /Span /MC0 BDC (x) Tj EMC /Span /Nope BDC (y) Tj EMC ET",
+            );
+        let doc = Document::from_bytes(pdf.into_bytes(), None).unwrap();
+        // A name the resources do not define is a sequence with no properties at all.
+        assert_eq!(doc.page(0).unwrap().text(), "fly");
+    }
+
+    #[test]
+    fn unbalanced_marked_content_does_not_leak_or_panic() {
+        // Never closed: the span covers the rest of the stream, and nothing breaks.
+        assert_eq!(
+            text_of("BT /F1 12 Tf 72 720 Td (a) Tj /Span <</ActualText (X)>> BDC (bc) Tj ET"),
+            "aX"
+        );
+        // Closed too often, and opened with operands that are not what the operator takes.
+        assert_eq!(
+            text_of(
+                "EMC EMC BT /F1 12 Tf 72 720 Td BDC (a) Tj EMC /Span 7 BDC (b) Tj EMC \
+                 /Span <</ActualText 7>> BDC (c) Tj EMC EMC ET"
+            ),
+            "abc"
+        );
     }
 
     #[test]
