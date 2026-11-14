@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-14
+
+### Fixed
+
+- **0.1.2 dropped the space after numbered reference labels**, and many other plain spaces, in
+  Springer-typeset PDFs: "1. Lahiry" read as "1.<tab>Lahiry" and "et al." as "et<nbsp>al.".
+  That typesetter tags ordinary space glyphs with an `/ActualText` saying how the line was laid
+  out — a tab after a list label, a no-break or thin space where a line must not break, a
+  control character at a column gap — and 0.1.2 passed those through as the text. Any
+  whitespace or control character in a replacement now reads as a space, as a line feed already
+  did.
+- The same typesetter's zero-width marks in a replacement (zero-width space, word joiner,
+  left-to-right and right-to-left marks) are dropped as the soft hyphen is, so a URL or DOI it
+  allowed to break reads unbroken ("https://doi.org/10.1186/…" rather than
+  "https:// doi. org/ 10. 1186/ …"), and a non-breaking hyphen reads as a hyphen.
+- `Page::text` no longer starts a line twice when the first glyph on it has no text.
+
 ## [0.1.2] - 2026-11-14
 
 ### Fixed
@@ -87,7 +104,8 @@ First release.
   rendering. `DCTDecode` (JPEG) is handled.
 - Clipping is tracked as a bounding rectangle rather than an arbitrary path.
 
-[Unreleased]: https://github.com/pgarrett-scripps/rustium-pdf/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/pgarrett-scripps/rustium-pdf/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/pgarrett-scripps/rustium-pdf/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/pgarrett-scripps/rustium-pdf/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/pgarrett-scripps/rustium-pdf/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/pgarrett-scripps/rustium-pdf/releases/tag/v0.1.0
