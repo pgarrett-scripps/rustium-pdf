@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/ActualText` is honoured.** Inside a marked-content sequence that carries it, the
+  replacement is the text and the glyphs keep only their geometry: the first glyph of the
+  sequence holds the whole replacement, the rest hold nothing. Chromium-printed PDFs draw
+  ligatures and some digits as glyphs with no `/ToUnicode` entry and name them only this way,
+  so they previously extracted as "signicant" with every 6 and 8 missing from the reference
+  numbers. Nested sequences defer to the outermost replacement, an empty one silences its
+  glyphs, the value is decoded as a text string (UTF-16 behind a byte-order mark,
+  PDFDocEncoding otherwise), properties are followed through the `/Properties` resources, and a
+  form XObject drawn inside a sequence is part of it. A line break in the replacement reads as
+  a space: Chromium tags spaces with a line feed at HTML block boundaries, which are often
+  mid-line, and line breaks remain a matter of geometry.
+
 ## [0.1.0] - 2026-08-02
 
 First release.
